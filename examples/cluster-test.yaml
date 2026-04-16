@@ -1,0 +1,63 @@
+name: test-cluster
+
+topology:
+  kind: async-single-primary
+  single_writer: true
+  allow_cascading_replicas: false
+
+controller:
+  id: manager-1
+  lease:
+    backend: local-memory
+    ttl: 15s
+  monitor:
+    interval: 2s
+    failure_threshold: 3
+    reconfirm_timeout: 5s
+
+replication:
+  mode: gtid
+  semi_sync:
+    policy: preferred
+    wait_for_replica_count: 1
+    timeout: 5s
+  salvage:
+    policy: salvage-if-possible
+    timeout: 30s
+
+writer_endpoint:
+  kind: none
+
+hooks:
+  shell_compat: true
+
+nodes:
+  - id: db1
+    host: 192.168.161.11
+    port: 3306
+    version_series: "8.4"
+    expected_role: primary
+    candidate_priority: 0
+    sql:
+      user: mha
+      password_ref: plain:Dbbot_mha@8888
+
+  - id: db2
+    host: 192.168.161.12
+    port: 3306
+    version_series: "8.4"
+    expected_role: replica
+    candidate_priority: 100
+    sql:
+      user: mha
+      password_ref: plain:Dbbot_mha@8888
+
+  - id: db3
+    host: 192.168.161.13
+    port: 3306
+    version_series: "8.4"
+    expected_role: replica
+    candidate_priority: 90
+    sql:
+      user: mha
+      password_ref: plain:Dbbot_mha@8888

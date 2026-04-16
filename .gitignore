@@ -1,0 +1,54 @@
+# Compiled binaries
+/mha
+/mha_static
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build/test artifacts
+*.test
+*.out
+*.prof
+*.pprof
+coverage.html
+coverage.txt
+
+# Go workspace (Go 1.22+)
+go.work
+go.work.sum
+
+# State DB (SQLite runtime data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Cluster config (may contain credentials)
+# Keep examples/ checked in with sanitized samples only
+/etc/mha/
+*.secret
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Misc
+vendor/
+dist/
+tmp/

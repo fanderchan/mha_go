@@ -1,0 +1,83 @@
+name: app1
+topology:
+  kind: async-single-primary
+  single_writer: true
+  allow_cascading_replicas: true
+
+controller:
+  id: manager-1
+  lease:
+    backend: local-memory
+    ttl: 15s
+  monitor:
+    interval: 1s
+    failure_threshold: 3
+    reconfirm_timeout: 3s
+  secondary_checks:
+    - name: replica2-observer
+      observer_node: db2
+      timeout: 2s
+    - name: replica3-observer
+      observer_node: db3
+      timeout: 2s
+
+replication:
+  mode: gtid
+  semi_sync:
+    policy: preferred
+    wait_for_replica_count: 1
+    timeout: 5s
+  salvage:
+    policy: salvage-if-possible
+    timeout: 30s
+
+writer_endpoint:
+  kind: vip
+  target: 192.0.2.10
+  # command: /usr/local/bin/mha-move-vip.sh   # failover-execute --dry-run=false 时执行（也可设 MHA_WRITER_ENDPOINT_COMMAND）
+
+hooks:
+  shell_compat: true
+
+nodes:
+  - id: db1
+    host: 10.0.0.11
+    port: 3306
+    version_series: 8.4
+    expected_role: primary
+    candidate_priority: 0
+    sql:
+      user: repl
+      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      tls_profile: default
+    agent:
+      address: http://10.0.0.11:18080
+      auth_token: secret://agent/db1
+
+  - id: db2
+    host: 10.0.0.12
+    port: 3306
+    version_series: 8.4
+    expected_role: replica
+    candidate_priority: 100
+    sql:
+      user: repl
+      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      tls_profile: default
+    agent:
+      address: http://10.0.0.12:18080
+      auth_token: secret://agent/db2
+
+  - id: db3
+    host: 10.0.0.13
+    port: 3306
+    version_series: 8.4
+    expected_role: replica
+    candidate_priority: 90
+    sql:
+      user: repl
+      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      tls_profile: default
+    agent:
+      address: http://10.0.0.13:18080
+      auth_token: secret://agent/db3
