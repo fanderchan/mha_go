@@ -57,7 +57,8 @@ CREATE USER IF NOT EXISTS 'mha'@'<your-subnet>%'
   IDENTIFIED BY '<strong-password>';
 
 -- Minimum privileges for health checks + failover
-GRANT REPLICATION CLIENT,
+GRANT RELOAD,
+      REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
@@ -76,7 +77,7 @@ Prebuilt binaries do not require Go. Building from source requires Go 1.25+.
 Download a prebuilt Linux binary:
 
 ```bash
-MHA_VERSION=v0.1.0
+MHA_VERSION=v0.1.2
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;

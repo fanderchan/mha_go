@@ -7,6 +7,7 @@ COMPOSE_FILE="$SCRIPT_DIR/compose.yaml"
 
 PROJECT="${MHA_IT_PROJECT:-mha-go-it-$(date +%s)-$$}"
 MYSQL_IMAGE="${MYSQL_IMAGE:-mysql:8.4}"
+MHA_IT_RUNNER_IMAGE="${MHA_IT_RUNNER_IMAGE:-$MYSQL_IMAGE}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-rootpass}"
 MHA_IT_PASSWORD="${MHA_IT_PASSWORD:-mha_it_pass_123}"
 MHA_IT_KEEP="${MHA_IT_KEEP:-0}"
@@ -66,6 +67,8 @@ wait_for_mysql() {
 
 wait_for_replica() {
   local service="$1"
+  local source_host="$2"
+  local expected_rows="$3"
   local status=""
   local row_count=""
   for _ in {1..90}; do
@@ -73,7 +76,8 @@ wait_for_replica() {
     row_count="$(mysql_scalar "$service" "SELECT COUNT(*) FROM mha_it.t" 2>/dev/null || true)"
     if grep -q "Replica_IO_Running: Yes" <<<"$status" &&
       grep -q "Replica_SQL_Running: Yes" <<<"$status" &&
-      [[ "$row_count" == "2" ]]; then
+      grep -q "Source_Host: $source_host" <<<"$status" &&
+      [[ "$row_count" == "$expected_rows" ]]; then
       return 0
     fi
     sleep 2
@@ -84,16 +88,18 @@ wait_for_replica() {
   return 1
 }
 
-host_port() {
-  "${COMPOSE[@]}" port "$1" 3306 | sed -E 's/.*:([0-9]+)$/\1/'
-}
-
 sql_escape() {
   sed "s/'/''/g" <<<"$1"
 }
 
 run_mha() {
-  MHA_IT_PASSWORD="$MHA_IT_PASSWORD" "$MHA_BIN" "$@"
+  docker run --rm \
+    --network "${PROJECT}_default" \
+    --volume "$MHA_BIN:/mha:ro" \
+    --volume "$CONFIG_FILE:/cluster.yaml:ro" \
+    --env MHA_IT_PASSWORD="$MHA_IT_PASSWORD" \
+    --entrypoint /mha \
+    "$MHA_IT_RUNNER_IMAGE" "$@"
 }
 
 require_cmd docker
@@ -107,10 +113,11 @@ fi
 cd "$REPO_ROOT"
 
 if [[ -z "${MHA_IT_BIN:-}" ]]; then
-  go build -o "$MHA_BIN" ./cmd/mha
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-extldflags=-static" -o "$MHA_BIN" ./cmd/mha
 fi
 
-echo "starting MySQL 8.4 integration topology: project=$PROJECT image=$MYSQL_IMAGE"
+echo "starting MySQL 8.4 integration topology: project=$PROJECT image=$MYSQL_IMAGE runner=$MHA_IT_RUNNER_IMAGE"
 "${COMPOSE[@]}" up -d
 
 wait_for_mysql db1
@@ -120,7 +127,8 @@ wait_for_mysql db3
 MHA_PASS_SQL="$(sql_escape "$MHA_IT_PASSWORD")"
 mysql_exec db1 "
 CREATE USER IF NOT EXISTS 'mha'@'%' IDENTIFIED BY '$MHA_PASS_SQL';
-GRANT REPLICATION CLIENT,
+GRANT RELOAD,
+      REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
@@ -150,12 +158,8 @@ SET GLOBAL super_read_only = ON;
 "
 done
 
-wait_for_replica db2
-wait_for_replica db3
-
-DB1_PORT="$(host_port db1)"
-DB2_PORT="$(host_port db2)"
-DB3_PORT="$(host_port db3)"
+wait_for_replica db2 db1 2
+wait_for_replica db3 db1 2
 
 cat >"$CONFIG_FILE" <<YAML
 name: mysql84-integration
@@ -190,8 +194,8 @@ writer_endpoint:
 
 nodes:
   - id: db1
-    host: 127.0.0.1
-    port: $DB1_PORT
+    host: db1
+    port: 3306
     version_series: "8.4"
     expected_role: primary
     candidate_priority: 0
@@ -200,8 +204,8 @@ nodes:
       password_ref: env:MHA_IT_PASSWORD
 
   - id: db2
-    host: 127.0.0.1
-    port: $DB2_PORT
+    host: db2
+    port: 3306
     version_series: "8.4"
     expected_role: replica
     candidate_priority: 100
@@ -210,8 +214,8 @@ nodes:
       password_ref: env:MHA_IT_PASSWORD
 
   - id: db3
-    host: 127.0.0.1
-    port: $DB3_PORT
+    host: db3
+    port: 3306
     version_series: "8.4"
     expected_role: replica
     candidate_priority: 90
@@ -221,17 +225,26 @@ nodes:
 YAML
 
 echo "running check-repl"
-run_mha check-repl --config "$CONFIG_FILE"
+run_mha check-repl --config /cluster.yaml
 
 echo "running switchover dry-run"
-run_mha switch --config "$CONFIG_FILE" --new-primary db2
+run_mha switch --config /cluster.yaml --new-primary db2
+
+echo "running switchover execute"
+run_mha switch --config /cluster.yaml --new-primary db2 --dry-run=false
+
+echo "verifying post-switchover topology"
+run_mha check-repl --config /cluster.yaml
+mysql_exec db2 "INSERT INTO mha_it.t VALUES (3, 'after-switch');"
+wait_for_replica db1 db2 3
+wait_for_replica db3 db2 3
 
 echo "running failover-plan with live primary"
-run_mha failover-plan --config "$CONFIG_FILE" --candidate db2
+run_mha failover-plan --config /cluster.yaml --candidate db3
 
 echo "asserting failover-execute dry-run is blocked while primary is alive"
 set +e
-run_mha failover-execute --config "$CONFIG_FILE" --candidate db2
+run_mha failover-execute --config /cluster.yaml --candidate db3
 failover_rc=$?
 set -e
 if [[ "$failover_rc" -eq 0 ]]; then

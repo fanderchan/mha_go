@@ -22,6 +22,8 @@ import (
 	sqltransport "mha-go/internal/transport/sql"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -42,7 +44,7 @@ func main() {
 	case "failover-execute":
 		os.Exit(runFailoverExecute(ctx, os.Args[2:]))
 	case "version":
-		fmt.Println("mha-go 0.1.0")
+		fmt.Printf("mha-go %s\n", version)
 		return
 	default:
 		usage()

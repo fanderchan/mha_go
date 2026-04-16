@@ -43,6 +43,9 @@ CREATE USER 'mha'@'%' IDENTIFIED BY 'strong-password';
 -- Privileges needed for health checks and topology discovery
 GRANT REPLICATION CLIENT ON *.* TO 'mha'@'%';
 
+-- Privilege needed for RESET REPLICA ALL
+GRANT RELOAD ON *.* TO 'mha'@'%';
+
 -- Privileges needed for fencing and promotion
 GRANT SYSTEM_VARIABLES_ADMIN, SESSION_VARIABLES_ADMIN ON *.* TO 'mha'@'%';
 

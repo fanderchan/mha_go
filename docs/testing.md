@@ -32,8 +32,12 @@ The script enables GTID, configures replication with `SOURCE_AUTO_POSITION=1`, c
 
 - `mha check-repl`
 - `mha switch --new-primary db2` in dry-run mode
-- `mha failover-plan --candidate db2`
-- `mha failover-execute --candidate db2` and asserts it is blocked while the primary is still alive
+- `mha switch --new-primary db2 --dry-run=false` against the live Docker topology
+- a post-switchover `mha check-repl`
+- `mha failover-plan --candidate db3`
+- `mha failover-execute --candidate db3` and asserts it is blocked while the new primary is still alive
+
+The `mha` binary is executed inside the Docker network, so the same node addresses are valid for both SQL inspection and `CHANGE REPLICATION SOURCE TO`.
 
 Run it from the repository root:
 
@@ -46,9 +50,10 @@ Useful environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MYSQL_IMAGE` | `mysql:8.4` | MySQL image to test. Keep this on 8.4.x for the release-blocking matrix. |
+| `MHA_IT_RUNNER_IMAGE` | value of `MYSQL_IMAGE` | Image used to run the static `mha` binary inside the Docker network. |
 | `MYSQL_ROOT_PASSWORD` | `rootpass` | Root password inside the disposable containers. |
 | `MHA_IT_PASSWORD` | `mha_it_pass_123` | Password for the replicated `mha` SQL account. |
-| `MHA_IT_BIN` | built into a temp directory | Existing `mha` binary to test instead of building one. |
+| `MHA_IT_BIN` | built into a temp directory | Existing Linux amd64 `mha` binary to test instead of building one. |
 | `MHA_IT_KEEP` | `0` | Set to `1` to keep containers and generated config for debugging. |
 | `MHA_IT_PROJECT` | generated | Docker Compose project name. |
 

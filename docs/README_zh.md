@@ -57,7 +57,8 @@ CREATE USER IF NOT EXISTS 'mha'@'<你的子网>%'
   IDENTIFIED BY '<强密码>';
 
 -- 健康检查 + 故障转移所需的最小权限
-GRANT REPLICATION CLIENT,
+GRANT RELOAD,
+      REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
@@ -76,7 +77,7 @@ FLUSH PRIVILEGES;
 下载预编译 Linux 二进制：
 
 ```bash
-MHA_VERSION=v0.1.0
+MHA_VERSION=v0.1.2
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
