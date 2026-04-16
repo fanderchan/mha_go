@@ -1,0 +1,51 @@
+services:
+  db1:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    command:
+      - --server-id=1
+      - --report-host=db1
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --log-bin=mysql-bin
+      - --log-replica-updates=ON
+      - --relay-log=mysql-relay-bin
+      - --binlog-format=ROW
+      - --skip-name-resolve=ON
+    ports:
+      - "127.0.0.1::3306"
+
+  db2:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    command:
+      - --server-id=2
+      - --report-host=db2
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --log-bin=mysql-bin
+      - --log-replica-updates=ON
+      - --relay-log=mysql-relay-bin
+      - --binlog-format=ROW
+      - --skip-name-resolve=ON
+    ports:
+      - "127.0.0.1::3306"
+
+  db3:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    command:
+      - --server-id=3
+      - --report-host=db3
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+      - --log-bin=mysql-bin
+      - --log-replica-updates=ON
+      - --relay-log=mysql-relay-bin
+      - --binlog-format=ROW
+      - --skip-name-resolve=ON
+    ports:
+      - "127.0.0.1::3306"

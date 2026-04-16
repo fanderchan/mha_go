@@ -1,5 +1,7 @@
 # mha-go
 
+[![CI](https://github.com/fanderchan/mha_go/actions/workflows/ci.yml/badge.svg)](https://github.com/fanderchan/mha_go/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fanderchan/mha_go?display_name=tag)](https://github.com/fanderchan/mha_go/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
 
 [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager)（Master High Availability）的 Go 语言重写版。为基于 GTID 的单主 MySQL 复制拓扑提供自动化 **故障转移（failover）** 和 **在线切换（switchover）** 能力。
@@ -57,7 +59,7 @@ CREATE USER IF NOT EXISTS 'mha'@'<你的子网>%'
 -- 健康检查 + 故障转移所需的最小权限
 GRANT REPLICATION CLIENT,
       REPLICATION SLAVE,
-      REPLICATION SLAVE ADMIN,
+      REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
       SESSION_VARIABLES_ADMIN
   ON *.* TO 'mha'@'<你的子网>%';
@@ -67,9 +69,29 @@ FLUSH PRIVILEGES;
 
 > **提示**：将 `<你的子网>` 替换为实际网段（如 `192.168.1.%` 或 `10.0.%`）。
 
-### 3. 构建
+### 3. 安装
 
-需要 Go 1.25+。
+预编译二进制不依赖 Go；从源码构建需要 Go 1.25+。
+
+下载预编译 Linux 二进制：
+
+```bash
+MHA_VERSION=v0.1.0
+case "$(uname -m)" in
+  x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
+  aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+curl -fL -o mha \
+  "https://github.com/fanderchan/mha_go/releases/download/${MHA_VERSION}/${ASSET}"
+curl -fL -o SHA256SUMS \
+  "https://github.com/fanderchan/mha_go/releases/download/${MHA_VERSION}/SHA256SUMS"
+grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+chmod +x mha
+```
+
+也可以从源码构建：
 
 ```bash
 git clone git@github.com:fanderchan/mha_go.git
@@ -237,6 +259,7 @@ journalctl -u mha-manager -f
 | [操作手册](operations.md) | 完整配置参考、MySQL 前置条件、操作流程 |
 | [架构蓝图](mha-go-blueprint.md) | 设计决策和模块职责 |
 | [部署指南](deploy-mha-go.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
+| [测试指南](testing.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
 | [配置示例：MySQL 8.4](../examples/cluster-8.4.yaml) | 完整注释的三节点集群配置 |
 
 ## 许可协议

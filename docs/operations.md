@@ -47,7 +47,7 @@ GRANT REPLICATION CLIENT ON *.* TO 'mha'@'%';
 GRANT SYSTEM_VARIABLES_ADMIN, SESSION_VARIABLES_ADMIN ON *.* TO 'mha'@'%';
 
 -- Privileges needed for STOP/START/RESET/CHANGE REPLICA
-GRANT REPLICATION SLAVE ADMIN ON *.* TO 'mha'@'%';
+GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'mha'@'%';
 
 -- Privilege needed to replicate from this account
 GRANT REPLICATION SLAVE ON *.* TO 'mha'@'%';

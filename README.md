@@ -1,5 +1,7 @@
 # mha-go
 
+[![CI](https://github.com/fanderchan/mha_go/actions/workflows/ci.yml/badge.svg)](https://github.com/fanderchan/mha_go/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fanderchan/mha_go?display_name=tag)](https://github.com/fanderchan/mha_go/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 A Go rewrite of [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager) (Master High Availability). Automates **failover** and **online switchover** for GTID-based, single-primary MySQL replication topologies.
@@ -57,7 +59,7 @@ CREATE USER IF NOT EXISTS 'mha'@'<your-subnet>%'
 -- Minimum privileges for health checks + failover
 GRANT REPLICATION CLIENT,
       REPLICATION SLAVE,
-      REPLICATION SLAVE ADMIN,
+      REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
       SESSION_VARIABLES_ADMIN
   ON *.* TO 'mha'@'<your-subnet>%';
@@ -67,9 +69,29 @@ FLUSH PRIVILEGES;
 
 > **Tip**: Replace `<your-subnet>` with your network range (e.g. `192.168.1.%` or `10.0.%`).
 
-### 3. Build
+### 3. Install
 
-Requires Go 1.25+.
+Prebuilt binaries do not require Go. Building from source requires Go 1.25+.
+
+Download a prebuilt Linux binary:
+
+```bash
+MHA_VERSION=v0.1.0
+case "$(uname -m)" in
+  x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
+  aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+curl -fL -o mha \
+  "https://github.com/fanderchan/mha_go/releases/download/${MHA_VERSION}/${ASSET}"
+curl -fL -o SHA256SUMS \
+  "https://github.com/fanderchan/mha_go/releases/download/${MHA_VERSION}/SHA256SUMS"
+grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+chmod +x mha
+```
+
+Or build from source:
 
 ```bash
 git clone git@github.com:fanderchan/mha_go.git
@@ -237,6 +259,7 @@ journalctl -u mha-manager -f
 | [Operations Guide](docs/operations.md) | Full config reference, MySQL prerequisites, all workflows |
 | [Architecture Blueprint](docs/mha-go-blueprint.md) | Design decisions and module responsibilities |
 | [Deployment Guide](docs/deploy-mha-go.md) | Step-by-step deployment with [dbbot](https://github.com/fanderchan/dbbot) |
+| [Testing Guide](docs/testing.md) | Unit, CI, and local MySQL 8.4 integration tests |
 | [Example: MySQL 8.4](examples/cluster-8.4.yaml) | Annotated config for a 3-node cluster |
 
 ## License
