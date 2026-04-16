@@ -40,6 +40,7 @@ The script enables GTID, configures replication with `SOURCE_AUTO_POSITION=1`, c
 - `mha failover-plan --candidate db3`
 - `mha failover-execute --candidate db3 --dry-run=false`
 - a post-failover write on `db3` and replication check on `db1`
+- restarts recovered old primary `db2`, rejoins it to `db3` with GTID auto-position, and verifies the full three-node topology again
 
 The `mha` binary is executed inside the Docker network, so the same node addresses are valid for both SQL inspection and `CHANGE REPLICATION SOURCE TO`.
 

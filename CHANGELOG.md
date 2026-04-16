@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.4 - 2026-04-17
+
+- Extended the MySQL 8.4 Docker integration test to rejoin the recovered old primary after failover.
+- Added a final topology check after old-primary recovery.
+
 ## v0.1.3 - 2026-04-17
 
 - Extended the MySQL 8.4 Docker integration test to stop the current primary and execute a real failover to `db3`.

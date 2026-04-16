@@ -269,4 +269,26 @@ echo "verifying post-failover topology"
 mysql_exec db3 "INSERT INTO mha_it.t VALUES (4, 'after-failover');"
 wait_for_replica db1 db3 4
 
+echo "rejoining recovered old primary db2"
+"${COMPOSE[@]}" start db2 >/dev/null
+wait_for_mysql db2
+mysql_exec db2 "
+STOP REPLICA;
+RESET REPLICA ALL;
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='db3',
+  SOURCE_PORT=3306,
+  SOURCE_USER='mha',
+  SOURCE_PASSWORD='$MHA_PASS_SQL',
+  SOURCE_AUTO_POSITION=1,
+  GET_SOURCE_PUBLIC_KEY=1;
+SET GLOBAL read_only = ON;
+SET GLOBAL super_read_only = ON;
+START REPLICA;
+"
+wait_for_replica db2 db3 4
+
+echo "verifying recovered topology"
+run_mha check-repl --config /cluster.yaml
+
 echo "MySQL 8.4 integration test passed"

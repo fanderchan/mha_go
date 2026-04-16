@@ -77,7 +77,7 @@ Prebuilt binaries do not require Go. Building from source requires Go 1.25+.
 Download a prebuilt Linux binary:
 
 ```bash
-MHA_VERSION=v0.1.3
+MHA_VERSION=v0.1.4
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;

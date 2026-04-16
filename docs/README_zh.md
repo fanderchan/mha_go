@@ -77,7 +77,7 @@ FLUSH PRIVILEGES;
 下载预编译 Linux 二进制：
 
 ```bash
-MHA_VERSION=v0.1.3
+MHA_VERSION=v0.1.4
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
