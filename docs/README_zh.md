@@ -77,7 +77,7 @@ FLUSH PRIVILEGES;
 下载预编译 Linux 二进制：
 
 ```bash
-MHA_VERSION=v0.1.2
+MHA_VERSION=v0.1.3
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
@@ -261,6 +261,7 @@ journalctl -u mha-manager -f
 | [架构蓝图](mha-go-blueprint.md) | 设计决策和模块职责 |
 | [部署指南](deploy-mha-go.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
 | [测试指南](testing.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
+| [变更日志](../CHANGELOG.md) | 版本发布历史 |
 | [配置示例：MySQL 8.4](../examples/cluster-8.4.yaml) | 完整注释的三节点集群配置 |
 
 ## 许可协议

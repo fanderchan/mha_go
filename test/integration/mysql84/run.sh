@@ -256,4 +256,17 @@ if [[ "$failover_rc" -ne 1 ]]; then
   exit "$failover_rc"
 fi
 
+echo "stopping current primary db2"
+"${COMPOSE[@]}" stop db2 >/dev/null
+
+echo "running failover-plan after primary stop"
+run_mha failover-plan --config /cluster.yaml --candidate db3
+
+echo "running failover execute"
+run_mha failover-execute --config /cluster.yaml --candidate db3 --dry-run=false
+
+echo "verifying post-failover topology"
+mysql_exec db3 "INSERT INTO mha_it.t VALUES (4, 'after-failover');"
+wait_for_replica db1 db3 4
+
 echo "MySQL 8.4 integration test passed"

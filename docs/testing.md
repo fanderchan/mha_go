@@ -36,6 +36,10 @@ The script enables GTID, configures replication with `SOURCE_AUTO_POSITION=1`, c
 - a post-switchover `mha check-repl`
 - `mha failover-plan --candidate db3`
 - `mha failover-execute --candidate db3` and asserts it is blocked while the new primary is still alive
+- stops `db2`, the current primary after switchover
+- `mha failover-plan --candidate db3`
+- `mha failover-execute --candidate db3 --dry-run=false`
+- a post-failover write on `db3` and replication check on `db1`
 
 The `mha` binary is executed inside the Docker network, so the same node addresses are valid for both SQL inspection and `CHANGE REPLICATION SOURCE TO`.
 
@@ -62,6 +66,8 @@ When `MHA_IT_KEEP=1`, the script prints the Docker Compose project name and temp
 ## CI
 
 CI is defined in `.github/workflows/ci.yml` and runs on every push to `main` and every pull request. Release builds are defined in `.github/workflows/release.yml` and run for tags matching `v*`.
+
+The Docker integration test is intentionally manual and is defined in `.github/workflows/integration.yml`. Run it from the GitHub Actions UI when validating MySQL behavior before a release.
 
 ## GitHub Repository Settings
 

@@ -77,7 +77,7 @@ Prebuilt binaries do not require Go. Building from source requires Go 1.25+.
 Download a prebuilt Linux binary:
 
 ```bash
-MHA_VERSION=v0.1.2
+MHA_VERSION=v0.1.3
 case "$(uname -m)" in
   x86_64) ASSET="mha_${MHA_VERSION}_linux_amd64" ;;
   aarch64|arm64) ASSET="mha_${MHA_VERSION}_linux_arm64" ;;
@@ -261,6 +261,7 @@ journalctl -u mha-manager -f
 | [Architecture Blueprint](docs/mha-go-blueprint.md) | Design decisions and module responsibilities |
 | [Deployment Guide](docs/deploy-mha-go.md) | Step-by-step deployment with [dbbot](https://github.com/fanderchan/dbbot) |
 | [Testing Guide](docs/testing.md) | Unit, CI, and local MySQL 8.4 integration tests |
+| [Changelog](CHANGELOG.md) | Release history |
 | [Example: MySQL 8.4](examples/cluster-8.4.yaml) | Annotated config for a 3-node cluster |
 
 ## License

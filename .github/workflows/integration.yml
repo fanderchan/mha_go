@@ -1,0 +1,33 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      mysql_image:
+        description: "MySQL image to test"
+        required: false
+        default: "mysql:8.4"
+
+permissions:
+  contents: read
+
+jobs:
+  mysql84:
+    name: MySQL 8.4 Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run MySQL integration test
+        env:
+          MYSQL_IMAGE: ${{ inputs.mysql_image }}
+        run: ./test/integration/mysql84/run.sh
