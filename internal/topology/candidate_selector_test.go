@@ -13,9 +13,9 @@ func aliveReplica(id string) domain.NodeState {
 		Role:   domain.NodeRoleReplica,
 		Health: domain.NodeHealthAlive,
 		Replica: &domain.ReplicaState{
-			SourceID:        "db1",
-			AutoPosition:    true,
-			IOThreadRunning: true,
+			SourceID:         "db1",
+			AutoPosition:     true,
+			IOThreadRunning:  true,
 			SQLThreadRunning: true,
 		},
 	}

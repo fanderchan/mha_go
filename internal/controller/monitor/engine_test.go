@@ -81,9 +81,9 @@ func (f *fakeLeases) Acquire(_ context.Context, key, owner string, _ time.Durati
 
 type fakeLeaseHandle struct{ key, owner string }
 
-func (h *fakeLeaseHandle) Key() string                        { return h.key }
-func (h *fakeLeaseHandle) Owner() string                      { return h.owner }
-func (h *fakeLeaseHandle) Release(_ context.Context) error    { return nil }
+func (h *fakeLeaseHandle) Key() string                     { return h.key }
+func (h *fakeLeaseHandle) Owner() string                   { return h.owner }
+func (h *fakeLeaseHandle) Release(_ context.Context) error { return nil }
 
 type fakeFailoverHandler struct {
 	called bool

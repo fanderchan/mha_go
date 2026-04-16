@@ -42,10 +42,10 @@ func TestShellDispatcherSetsEnvVars(t *testing.T) {
 	envOutput := string(content)
 
 	checks := map[string]string{
-		"MHA_EVENT":       "failover.start",
-		"MHA_CLUSTER":     "app1",
-		"MHA_RUN_KIND":    "failover",
-		"MHA_NODE_ID":     "db1",
+		"MHA_EVENT":        "failover.start",
+		"MHA_CLUSTER":      "app1",
+		"MHA_RUN_KIND":     "failover",
+		"MHA_NODE_ID":      "db1",
 		"MHA_DEAD_PRIMARY": "db1",
 	}
 	for key, want := range checks {
