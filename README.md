@@ -8,17 +8,40 @@ A Go rewrite of [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager) (Ma
 
 [中文文档](docs/README_zh.md)
 
-## Features
+## Feature Comparison With Perl MHA
 
-- **Single binary** — no Perl, no node agent, no external dependencies
-- **GTID-native** — built exclusively for GTID replication (no relay-log positioning)
-- **Safe by default** — all write operations are dry-run unless explicitly confirmed
-- **Online switchover** — graceful primary migration with zero data loss
-- **Automatic failover** — monitor daemon detects primary failure and promotes the best candidate
-- **GTID salvage** — recovers missing transactions from donors before promotion
-- **Pluggable hooks** — shell callbacks for alerts, audit, and compatibility events
-- **Log-file audit trail** — persistent history is kept through structured logs, not SQLite
-- **Credential safety** — passwords via env vars or files; never hardcoded in config
+Legend: `✓` supported, `-` not supported by design, `Partial` implemented for the common path but not feature-complete.
+
+| Area | Capability | Perl MHA 0.58 | mha-go |
+|------|------------|---------------|--------|
+| Deployment | Single self-contained binary | - | ✓ |
+| Deployment | No Perl runtime dependency | - | ✓ |
+| Deployment | No mandatory node package on every MySQL host | - | ✓ |
+| Version scope | Legacy MySQL support | ✓ | - |
+| Version scope | Explicit MySQL 8.4 release baseline | - | ✓ |
+| Version scope | MySQL 9.7 ER/EA forward-compatibility track | - | Partial |
+| Replication model | GTID-only safety model | - | ✓ |
+| Replication model | Non-GTID / file-position failover | ✓ | - |
+| Topology check | One-shot replication health check | ✓ | ✓ |
+| Topology check | Capability-driven SQL discovery | - | ✓ |
+| Failover | Automatic primary failure detection | ✓ | ✓ |
+| Failover | Candidate priority / no-master controls | ✓ | ✓ |
+| Failover | Typed, ordered failover plan before execution | - | ✓ |
+| Failover | Dry-run by default for write operations | - | ✓ |
+| Recovery | Relay-log / binlog recovery through SSH node tools | ✓ | - |
+| Recovery | GTID catch-up from SQL-accessible donors | - | ✓ |
+| Recovery | SSH/node-tool binlog salvage for unreachable SQL paths | ✓ | Planned |
+| Switchover | Online primary switchover | ✓ | ✓ |
+| Writer endpoint | VIP/proxy switch by external command | ✓ | ✓ |
+| Writer endpoint | Precheck before promotion | - | ✓ |
+| Writer endpoint | Post-switch verify command | - | ✓ |
+| Fencing | SQL read-only fence | Partial | ✓ |
+| Fencing | Configurable required/optional fencing steps | - | ✓ |
+| Hooks | Lifecycle shell callbacks | ✓ | ✓ |
+| Hooks | Hooks used as the main VIP move path | ✓ | - |
+| Observability | Structured logs for audit/history | - | ✓ |
+| Secrets | Env/file/plain credential references | - | ✓ |
+| Testing | Go unit tests and CI static builds | - | ✓ |
 
 ## Supported MySQL Versions
 
