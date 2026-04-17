@@ -10,6 +10,25 @@ A Go rewrite of [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager) (Ma
 
 ## Feature Comparison With Perl MHA
 
+### Operating Model
+
+| Topic | Perl MHA 0.58 | mha-go |
+|-------|---------------|--------|
+| Implementation language | Perl | Go |
+| Packaging model | Manager plus node tools | Single manager binary; agent/SSH paths are optional extension points |
+| Primary compatibility goal | Broad historical MySQL/MariaDB-era deployments | Modern MySQL GTID single-primary replication |
+| Supported MySQL baseline | Legacy versions, including non-GTID paths | MySQL 8.4.x release baseline; MySQL 9.7 ER/EA forward track |
+| Replication positioning | File/position and GTID-era logic | GTID-only; no relay-log position model |
+| State and history | Script output and manager logs | In-process run state plus structured log-file audit trail |
+| Writer endpoint model | Typically handled by hook scripts such as VIP failover scripts | Dedicated `writer_endpoint` step with optional precheck and verify commands |
+| Hook role | Operational scripts often carry critical switch behavior | Notification, audit, and compatibility callbacks; not the main VIP/proxy switch path |
+| Fencing model | Mostly external scripts and operational convention | Explicit fencing steps with required/optional semantics |
+| Safety default | Commands generally execute when invoked | Mutating failover/switchover commands default to dry-run |
+| Persistence policy | No embedded state DB | No SQLite or embedded DB; persistent history belongs in logs |
+| Controller HA model | Single active manager in normal operation | Single active manager by default, matching the Perl MHA operating model |
+
+### Capability Matrix
+
 Legend: `✓` supported, `-` not supported by design, `Partial` implemented for the common path but not feature-complete.
 
 | Area | Capability | Perl MHA 0.58 | mha-go |

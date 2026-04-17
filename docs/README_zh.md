@@ -10,6 +10,25 @@
 
 ## 与 Perl MHA 的功能对比
 
+### 运行模型
+
+| 主题 | Perl MHA 0.58 | mha-go |
+|------|---------------|--------|
+| 实现语言 | Perl | Go |
+| 打包模型 | manager 加 node 工具包 | 单 manager 二进制；agent/SSH 路径作为可选扩展点 |
+| 主要兼容目标 | 历史 MySQL/MariaDB 时代的广泛部署 | 现代 MySQL GTID 单主复制 |
+| 支持基线 | 旧版本与非 GTID 路径 | MySQL 8.4.x 发布基线；MySQL 9.7 ER/EA 前向兼容轨道 |
+| 复制定位 | 文件位点和 GTID 时代逻辑并存 | GTID-only；不保留 relay-log 位点模型 |
+| 状态与历史 | 脚本输出和 manager 日志 | 进程内运行状态加结构化日志文件审计 |
+| 写入口模型 | 通常由 hook 脚本承担，例如 VIP failover 脚本 | 独立 `writer_endpoint` 步骤，支持 precheck 和 verify 命令 |
+| Hook 角色 | 运维脚本常承载关键切换行为 | 告警、审计和兼容回调；不作为 VIP/proxy 主切换入口 |
+| 隔离模型 | 主要依赖外部脚本和运维约定 | 显式 fencing steps，支持 required/optional 语义 |
+| 安全默认值 | 命令调用后通常直接执行 | 变更类 failover/switchover 默认 dry-run |
+| 持久化策略 | 不内置状态数据库 | 不引入 SQLite 或内嵌 DB；持久历史归日志系统 |
+| 控制器 HA 模型 | 常规单活 manager | 默认单活 manager，贴近 Perl MHA 运维模型 |
+
+### 能力矩阵
+
 图例：`✓` 表示支持，`-` 表示按设计不支持，`部分` 表示常见路径已实现但还不是完整能力。
 
 | 大项 | 细项 | Perl MHA 0.58 | mha-go |
