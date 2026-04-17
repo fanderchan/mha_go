@@ -1,24 +1,24 @@
-# mha-go Deployment Guide
+# mha-go 部署指南
 
-[中文](deploy-mha-go_zh.md)
+[English](deploy-mha-go.md)
 
-For a 1-primary 2-replica MySQL 8.4 GTID topology deployed with dbbot's `master_slave.yml` playbook.
+适用于通过 dbbot `master_slave.yml` playbook 部署的一主两从 MySQL 8.4 GTID 拓扑。
 
-## Prerequisites
+## 前提条件
 
-| Item | Requirement |
+| 项目 | 要求 |
 |---|---|
-| MySQL version | 8.4.x (GTID ON, `gtid_mode=ON`, `enforce_gtid_consistency=ON`) |
-| Topology | 1 primary + 2 replicas deployed by `master_slave.yml` (`master_slave_finish.flag` present) |
-| Account | `admin` account with `SUPER`/`SYSTEM_VARIABLES_ADMIN` privileges for granting |
-| Network | Control host (manager_ip) can reach all three nodes on TCP 3306 |
-| OS | x86_64 Linux; glibc ≥ 2.17 (statically compiled binary, no extra dependencies) |
+| MySQL 版本 | 8.4.x（GTID ON，`gtid_mode=ON`，`enforce_gtid_consistency=ON`） |
+| 拓扑 | 一主两从，由 `master_slave.yml` 部署（存在 `master_slave_finish.flag`） |
+| 用户 | `admin` 账号具备 `SUPER`/`SYSTEM_VARIABLES_ADMIN` 权限，用于授权 |
+| 网络 | 中控机（manager_ip）可 TCP 3306 访问全部三节点 |
+| 操作系统 | x86_64 Linux；glibc ≥ 2.17（静态编译二进制，无额外依赖） |
 
-## Architecture
+## 架构
 
 ```
    ┌─────────────────────────────────┐
-   │  192.168.161.11  (db1 / manager)│  ← primary + control host
+   │  192.168.161.11  (db1 / manager)│  ← primary + 中控
    │  mysql3306  running             │
    │  /usr/local/bin/mha             │
    │  /etc/mha/cluster.yaml          │
@@ -30,11 +30,11 @@ For a 1-primary 2-replica MySQL 8.4 GTID topology deployed with dbbot's `master_
   (db2 / replica)      (db3 / replica)
 ```
 
-> The manager process only runs on the `manager_ip` node, so the `mha` binary needs to be installed there.
+> manager 进程只在 `manager_ip` 节点运行，mha 二进制需安装在该节点。
 
-## Step 1: Build the mha binary
+## 步骤一：构建 mha 二进制
 
-On a build host with Go 1.25+:
+在有 Go 1.25+ 的构建机上执行：
 
 ```bash
 git clone git@github.com:fanderchan/mha_go.git
@@ -43,18 +43,18 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -ldflags="-extldflags=-static" -o mha ./cmd/mha
 ```
 
-The resulting `mha` is statically linked and can be dropped onto any x86_64 Linux host.
+生成的 `mha` 静态链接，可直接部署到任意 x86_64 Linux。
 
-## Step 2: Deploy the binary
+## 步骤二：部署二进制
 
 ```bash
 scp mha root@<manager_ip>:/usr/local/bin/mha
 ssh root@<manager_ip> "chmod +x /usr/local/bin/mha && mha --help"
 ```
 
-## Step 3: Create the mha MySQL account
+## 步骤三：创建 mha MySQL 账号
 
-Run on the **primary** (will be replicated to all replicas via GTID):
+在 **primary** 上执行（会自动通过 GTID 复制到所有从库）：
 
 ```sql
 CREATE USER IF NOT EXISTS 'mha'@'<subnet>%'
@@ -67,20 +67,20 @@ GRANT SELECT, RELOAD, SUPER,
 FLUSH PRIVILEGES;
 ```
 
-dbbot defaults:
-- Username: `mha`
-- Password: `Dbbot_mha@8888`
-- Host range: `192.168.161.%` (adjust to your subnet)
+dbbot 默认值：
+- 用户名：`mha`
+- 密码：`Dbbot_mha@8888`
+- 主机范围：`192.168.161.%`（按实际子网修改）
 
-Verify it replicated to the replicas:
+验证是否已复制到从库：
 
 ```bash
 mysql -h 192.168.161.12 -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
 ```
 
-## Step 4: Write the cluster config
+## 步骤四：编写集群配置
 
-Create `/etc/mha/cluster.yaml` (example mirrors the test environment):
+创建 `/etc/mha/cluster.yaml`（以本次测试环境为例）：
 
 ```yaml
 name: <cluster-name>
@@ -103,7 +103,7 @@ controller:
 replication:
   mode: gtid
   semi_sync:
-    policy: preferred          # takes effect when the plugin is loaded; otherwise falls back to async
+    policy: preferred          # 有插件时生效，无则降为 async
     wait_for_replica_count: 1
     timeout: 5s
   salvage:
@@ -111,7 +111,7 @@ replication:
     timeout: 30s
 
 writer_endpoint:
-  kind: none                   # switch to vip or proxy in production
+  kind: none                   # 生产环境改为 vip 或 proxy
 
 nodes:
   - id: db1
@@ -129,7 +129,7 @@ nodes:
     port: 3306
     version_series: "8.4"
     expected_role: replica
-    candidate_priority: 100    # highest priority; promoted first
+    candidate_priority: 100    # 最高优先级，优先提升
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
@@ -145,18 +145,18 @@ nodes:
       password_ref: plain:Dbbot_mha@8888
 ```
 
-`password_ref` supports three forms:
-- `plain:<value>` — plaintext (testing only)
-- `env:<VAR>` — read from environment variable
-- `file:</path/to/file>` — read from file (recommended for production)
+`password_ref` 支持三种形式：
+- `plain:<value>` — 明文（仅测试）
+- `env:<VAR>` — 从环境变量读取
+- `file:</path/to/file>` — 从文件读取（推荐生产）
 
-## Step 5: Verify the topology
+## 步骤五：验证拓扑
 
 ```bash
 mha check-repl --config /etc/mha/cluster.yaml
 ```
 
-Expected output:
+期望输出示例：
 
 ```
 Cluster: <name>  mode=async-single-primary  primary=db1  nodes=3
@@ -168,44 +168,44 @@ Cluster: <name>  mode=async-single-primary  primary=db1  nodes=3
 Assessment: OK
 ```
 
-## Step 6: Online switchover
+## 步骤六：在线切换（switchover）
 
-Online switchover doesn't interrupt the workload and is appropriate for planned maintenance (host drain, upgrade, etc.):
+在线切换不中断业务，适合主动运维（机器下线、升级等）：
 
 ```bash
-# Dry-run (default; no MySQL writes)
+# Dry-run（默认，不执行 MySQL 写操作）
 mha switch --config /etc/mha/cluster.yaml --new-primary db2
 
-# Execute for real
+# 真实执行
 mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
 ```
 
-## Step 7: Failover plan (emergency rehearsal)
+## 步骤七：failover 计划（紧急预案）
 
 ```bash
-# Inspect the plan and any blocking reasons
+# 查看 failover 步骤和阻断原因
 mha failover-plan --config /etc/mha/cluster.yaml
 
-# Execute (only after the primary is confirmed dead)
+# 强制执行（primary 已确认死亡时使用）
 mha failover-execute --config /etc/mha/cluster.yaml --dry-run=false
 ```
 
-## Long-running monitor mode
+## 常驻监控模式
 
 ```bash
-# Foreground (for testing)
+# 前台运行（测试）
 mha manager --config /etc/mha/cluster.yaml
 
-# systemd-managed (production)
+# systemd 管理（生产）
 systemctl start mha-manager
 systemctl enable mha-manager
 ```
 
-See the systemd section below.
+参见下节 systemd 单元文件配置。
 
-## systemd unit file
+## systemd 单元文件
 
-`/etc/systemd/system/mha-manager.service`:
+`/etc/systemd/system/mha-manager.service`：
 
 ```ini
 [Unit]
@@ -231,43 +231,44 @@ systemctl enable --now mha-manager
 journalctl -u mha-manager -f
 ```
 
-The manager exits normally after a successful failover. Update `/etc/mha/cluster.yaml` with the new primary/replica roles, verify the new topology with `mha check-repl --config /etc/mha/cluster.yaml`, and then explicitly run `systemctl restart mha-manager`. `Restart=on-failure` only covers crashes or non-zero exits — it should not be used to automatically restart the monitor while the config still points at the old primary.
+manager 在成功故障转移后会正常退出。此时先更新 `/etc/mha/cluster.yaml` 中的主从角色，用 `mha check-repl --config /etc/mha/cluster.yaml` 验证新拓扑，再显式执行 `systemctl restart mha-manager`。`Restart=on-failure` 只用于崩溃或非零退出，不应在配置仍指向旧主时自动重启监控。
 
-## Troubleshooting
+## 常见问题
 
-### mha user is missing RELOAD/SUPER
+### mha 用户权限不足（RELOAD/SUPER 缺失）
 
-Missing privileges on a replica usually means the GRANT never replicated because the replication thread was stopped. Steps:
+从库缺权限通常因复制线程暂停导致 GRANT 未同步。处理步骤：
 
 ```bash
-# 1. Check replica threads
+# 1. 检查从库复制状态
 mysql -h <replica> -u admin -p -e "SHOW REPLICA STATUS\G" | grep Running
 
-# 2. If IO/SQL thread is stopped, start it
+# 2. 若 IO/SQL 线程停止，重启
 mysql -h <replica> -u admin -p -e "START REPLICA;"
 
-# 3. Wait for GTID to catch up, then re-check grants
+# 3. 等待 GTID 同步后再验证权限
 mysql -h <replica> -u admin -p -e "SHOW GRANTS FOR 'mha'@'...%';"
 ```
 
-### glibc version mismatch
+### glibc 版本不兼容
 
-Symptom: `/lib64/libc.so.6: version 'GLIBC_2.32' not found`
+症状：`/lib64/libc.so.6: version 'GLIBC_2.32' not found`
 
-Cause: the binary was dynamically linked on a host with a newer glibc.
+原因：二进制在高版本 glibc 系统上动态编译。
 
-Fix: rebuild with `CGO_ENABLED=0` (see Step 1).
+解决：使用 `CGO_ENABLED=0` 静态编译（见步骤一）。
 
-### Replication threads stop after switchover
+### switchover 后复制线程停止
 
-During an online switchover, `RESET REPLICA ALL` + `CHANGE REPLICATION SOURCE TO` can stall if the old primary still holds locks. Recover with:
+在线切换执行 `RESET REPLICA ALL` + `CHANGE REPLICATION SOURCE TO` 时，
+如果旧 primary 的锁未释放会导致线程卡住。处理：
 
 ```bash
 mysql -h <node> -u admin -p -e "SET GLOBAL super_read_only=0; START REPLICA;"
 ```
 
-## References
+## 参考
 
-- Architecture blueprint: [mha-go-blueprint.md](mha-go-blueprint.md)
-- Operations guide: [operations.md](operations.md)
-- Example config: [../examples/cluster-test.yaml](../examples/cluster-test.yaml)
+- 架构设计：[mha-go-blueprint_zh.md](mha-go-blueprint_zh.md)
+- 操作手册：[operations_zh.md](operations_zh.md)
+- 配置示例：[../examples/cluster-test.yaml](../examples/cluster-test.yaml)

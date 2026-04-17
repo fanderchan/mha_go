@@ -1,80 +1,82 @@
-# MHA Go 重构蓝图
+# MHA Go Rewrite Blueprint
 
-更新时间：2026-04-17
-状态：基线设计文档
+[中文](mha-go-blueprint_zh.md)
 
-## 1. 文档目的
+Last updated: 2026-04-17
+Status: baseline design document
 
-本文档定义新一代 MHA 的 Go 版重构方向，作为后续持续开发的基线。
+## 1. Purpose
 
-目标不是逐行复刻 `mha4mysql-manager`/`mha4mysql-node` 0.58，而是：
+This document defines the direction of the Go rewrite of MHA and serves as the baseline for ongoing development.
 
-- 继承 MHA 在异步复制单写拓扑上的核心能力
-- 解决 0.58 的主要痛点
-- 明确只支持现代版本与现代运维方式
-- 为后续扩展到 Group Replication / InnoDB Cluster 预留规范
+The goal is not to replicate `mha4mysql-manager` / `mha4mysql-node` 0.58 line-by-line, but to:
 
-## 2. 产品边界
+- Inherit MHA's core capabilities for async single-writer replication topologies
+- Resolve the main pain points of 0.58
+- Commit explicitly to modern versions and modern operating practices
+- Leave room for Group Replication / InnoDB Cluster without implementing them yet
 
-### 2.1 当前版本范围
+## 2. Product Scope
 
-当前版本只支持：
+### 2.1 Current version scope
 
-- MySQL `8.4.x`：主力支持版本，测试与生产基线
-- MySQL `9.7 ER/EA`：预研和预适配版本，作为前瞻验证目标
+This version supports only:
 
-不支持：
+- MySQL `8.4.x`: primary support target, both test and production baseline
+- MySQL `9.7 ER/EA`: pre-adaptation target for forward-looking validation
+
+Not supported:
 
 - MySQL `5.7`
 - MySQL `8.0`
 - MySQL `9.6`
-- 非 GTID 复制模式
+- Non-GTID replication
 
-说明：
+Notes:
 
-- 截至 2026-04-14，`8.4` 是稳定长期支持主线。
-- `9.7` 仍按 `ER/EA` 目标对待，代码必须以能力探测为核心，避免写死版本假设。
-- 当前没有稳定 `9.7` 验证环境时，`9.7` 只进入测试蓝图和前向兼容设计，不作为当前发布阻断项。
+- As of 2026-04-14, `8.4` is the stable long-term support line.
+- `9.7` is still treated as `ER/EA`. Code must prioritize capability detection and must not hard-code version assumptions.
+- Without a stable `9.7` validation environment, `9.7` stays in the test blueprint and the forward-compatibility design; it is not a release blocker right now.
 
-### 2.2 当前拓扑范围
+### 2.2 Current topology scope
 
-当前版本只覆盖：
+This version covers only:
 
-- 异步复制单写架构
-- GTID 复制
-- 可选半同步复制
-- 单主多从
-- 可识别多级复制，但 v1 以单层主从为主测试面
+- Async single-writer replication
+- GTID replication
+- Optional semi-sync replication
+- Single primary with multiple replicas
+- Multi-level replication is recognized, but v1's main test surface is single-level primary-to-replica
 
-未来版本预留但暂不实现：
+Reserved but not implemented for now:
 
 - Group Replication
 - InnoDB Cluster
-- 多写拓扑
+- Multi-writer topologies
 
-## 3. 相比 MHA 0.58 要解决的痛点
+## 3. Pain Points of 0.58 That This Rewrite Addresses
 
-### 3.1 0.58 的主要问题
+### 3.1 Main problems in 0.58
 
-- 依赖 Perl、SSH、公钥、node 工具包，部署和维护成本高
-- 监控、故障切换、在线切换逻辑分散，执行过程难以审计
-- 中途失败时恢复能力弱，更多依赖人工介入
-- 观测性不足，缺少结构化事件流和统一历史记录
-- 外部 hook 以 shell 参数拼接为主，接口脆弱
-- 非 GTID/relay log 恢复逻辑复杂，核心模型被历史兼容拖累
-- 对现代版本演进的适配方式偏经验化，而不是能力化
+- Depends on Perl, SSH, public keys, and the node toolkit — deployment and maintenance are costly
+- Monitoring, failover, and online switchover logic are scattered; execution is hard to audit
+- Weak recovery on mid-execution failures; mostly relies on human intervention
+- Poor observability; no structured event stream or unified history record
+- External hooks rely on shell argument concatenation and are brittle
+- Non-GTID / relay-log recovery logic is complex, and the core model is dragged down by historical compatibility
+- Adapting to modern version evolution leans empirical rather than capability-based
 
-### 3.2 新版本的解决方向
+### 3.2 Solutions in the new version
 
-- 单二进制 Go 程序，依赖最小化
-- 以清晰状态机驱动监控、故障切换和在线切换
-- 以 `GTID-first` 为核心，不再让非 GTID 路径主导架构
-- 以能力探测代替大量版本硬编码
-- 引入结构化事件日志、运行日志、审计日志、指标
-- hook typed 化，shell 兼容作为适配层
-- 可选 agent 模式，逐步弱化对裸 SSH 的依赖
+- Single Go binary with minimum dependencies
+- State machines drive monitoring, failover, and online switchover
+- `GTID-first` as a core principle — non-GTID paths no longer shape the architecture
+- Capability detection replaces large amounts of hard-coded version branching
+- Structured event logs, run logs, audit logs, and metrics
+- Typed hooks; shell compatibility as an adapter layer
+- Optional agent mode that gradually reduces reliance on raw SSH
 
-## 4. 设计原则
+## 4. Design Principles
 
 - `GTID-only`
 - `State-machine first`
@@ -84,55 +86,55 @@
 - `Production on 8.4 first`
 - `9.7 ER compatibility by detection, not assumption`
 
-## 5. 总体架构
+## 5. Overall Architecture
 
 ```text
 cmd/mha
-├─ manager        长驻监控 + 自动故障切换
-├─ switch         在线切换
-├─ check-repl     拓扑与复制健康检查
-├─ failover-plan  故障切换计划
-├─ failover-execute 故障切换执行
-└─ version        版本信息
+├─ manager        long-running monitor + automatic failover
+├─ switch         online switchover
+├─ check-repl     topology and replication health check
+├─ failover-plan  failover planning
+├─ failover-execute failover execution
+└─ version        version info
 
 internal/
-├─ config         配置模型与兼容旧 MHA 配置
-├─ capability     版本能力探测
-├─ domain         领域对象
-├─ topology       拓扑发现与候选主决策
-├─ monitor        健康检查与误判抑制
-├─ failover       自动故障切换状态机
-├─ switchover     在线切换状态机
-├─ replication    GTID 复制控制与补数逻辑
-├─ fencing        VIP / STONITH / endpoint 切换
-├─ hooks          typed hooks + shell 兼容层
-├─ state          进程内状态、事件、运行记录
+├─ config         config model; compat with legacy MHA config
+├─ capability     version capability detection
+├─ domain         domain objects
+├─ topology       topology discovery and candidate selection
+├─ monitor        health checks and false-positive suppression
+├─ failover       automatic failover state machine
+├─ switchover     online switchover state machine
+├─ replication    GTID replication control and salvage logic
+├─ fencing        VIP / STONITH / endpoint switching
+├─ hooks          typed hooks + shell compat layer
+├─ state          in-process state, events, run records
 ├─ transport      SQL / SSH / Agent RPC
-└─ obs            日志、指标、审计、事件查询
+└─ obs            logging, metrics, audit, event queries
 ```
 
-## 6. 核心模块
+## 6. Core Modules
 
 ### 6.1 `config`
 
-负责：
+Responsibilities:
 
-- 读取 YAML/TOML/JSON 主配置
-- 兼容导入旧 MHA `cnf`
-- 校验必填项
-- 校验互斥项
-- 归一化默认值
+- Read YAML/TOML/JSON primary config
+- Import legacy MHA `cnf` for compatibility
+- Validate required fields
+- Validate mutually exclusive fields
+- Normalize defaults
 
-核心要求：
+Core requirements:
 
-- 不再以“块名 + Perl 风格参数”作为内部模型
-- 旧格式只作为输入适配，不进入核心 domain
-- `password_ref` 当前统一采用引用形式，v1 先支持 `env:NAME`、`file:/path`、`plain:value`
-- 离线演示和单元测试允许 `static discoverer`，真实拓扑检查走 `sql discoverer`
+- Stop using "block name + Perl-style parameters" as the internal model
+- Legacy formats are input adapters only; they do not enter the core domain
+- `password_ref` uses a unified reference form. In v1 we support `env:NAME`, `file:/path`, and `plain:value`
+- Offline demos and unit tests may use `static discoverer`; real topology checks go through `sql discoverer`
 
 ### 6.2 `capability`
 
-对每个节点探测能力：
+Detect capabilities per node:
 
 - `HasGTID`
 - `HasAutoPosition`
@@ -144,14 +146,14 @@ internal/
 - `SupportsDynamicPrivileges`
 - `SupportsReadOnlyFence`
 
-规则：
+Rules:
 
-- 控制器不直接写 `if version >= x`
-- 先看 capability，再决定行为
+- Controllers must not write `if version >= x`
+- Check capabilities first, then decide behavior
 
 ### 6.3 `domain`
 
-建议对象：
+Suggested objects:
 
 - `ClusterSpec`
 - `NodeSpec`
@@ -166,37 +168,37 @@ internal/
 
 ### 6.4 `topology`
 
-职责：
+Responsibilities:
 
-- 发现当前 writer
-- 区分 alive / dead / replica / non-replica
-- 判断候选主可用性
-- 检查复制过滤与配置一致性
-- 识别多级复制
-- 输出可供状态机消费的 `ClusterView`
+- Discover the current writer
+- Distinguish alive / dead / replica / non-replica
+- Judge candidate availability
+- Check replication filters and config consistency
+- Recognize multi-level replication
+- Produce a `ClusterView` for the state machine to consume
 
-当前实现约束：
+Current implementation constraints:
 
-- `sql discoverer` 通过只读 SQL 探测节点基础信息、GTID、`SHOW REPLICA STATUS`、半同步状态
-- `static discoverer` 仅用于离线 dry-run、示例和测试，不作为生产探测路径
-- `check-repl` 在发现拓扑后会执行复制健康评估，区分 error/warn finding
-- 候选主排序当前综合 `auto-position`、复制线程状态、source 映射、只读状态、半同步和 lag，而不是只看静态优先级
-- `failover-plan` 当前会先获取 lease，再基于 GTID 集合计算 candidate 新鲜度、primary 差集和 donor 建议
-- `failover-plan` 当前还会输出 execution gate：primary 是否确认故障、阻断原因、以及建议的 salvage action 列表
-- `failover-plan` 当前会生成 typed step outline，覆盖 `confirm`, `fence`, `salvage`, `promote`, `repoint`, `switch-writer-endpoint`, `verify`
-- `failover-execute --dry-run` 当前已能消费 typed step outline，并在第一个 blocking step 停止执行
-- `failover-execute --dry-run=false` 使用 `MySQLActionRunner`：`writer_endpoint.kind` 为 `vip`/`proxy` 时先执行 endpoint precheck（确认切换命令存在，并运行可选 `precheck_command`）；按 `fencing.steps` 对旧主做隔离，默认 required `read_only`（旧主可连则 `super_read_only`/`read_only`，旧主已在拓扑中标记为 dead 且不可连则跳过）；补数步骤将候选指向 donor 后 `WAIT_FOR_EXECUTED_GTID_SET`；候选主 `STOP REPLICA` / `RESET REPLICA ALL` / 关闭只读后提升；只重指向规划阶段可达的从库，普通 dead 从库会跳过并留待后续 rejoin；写入口切换通过 `writer_endpoint.command` 或环境变量 `MHA_WRITER_ENDPOINT_COMMAND` 执行外部脚本；可选 `verify_command` 验证 endpoint；`verify-cluster` 用 SQL 巡检新主可写且可达从库指向新主
+- `sql discoverer` probes node basics, GTID, `SHOW REPLICA STATUS`, and semi-sync state via read-only SQL
+- `static discoverer` is used only for offline dry-run, examples, and tests — never as the production discovery path
+- `check-repl` runs a replication health assessment after discovery and separates error vs. warn findings
+- Candidate ranking currently combines `auto-position`, replication thread state, source mapping, read-only state, semi-sync, and lag — not just a static priority
+- `failover-plan` first acquires the lease, then computes candidate freshness, primary gap, and donor recommendation from the GTID sets
+- `failover-plan` also emits an execution gate: whether the primary is confirmed dead, the blocking reasons, and the recommended salvage actions
+- `failover-plan` produces a typed step outline covering `confirm`, `fence`, `salvage`, `promote`, `repoint`, `switch-writer-endpoint`, and `verify`
+- `failover-execute --dry-run` consumes the typed step outline and halts at the first blocking step
+- `failover-execute --dry-run=false` uses `MySQLActionRunner`: when `writer_endpoint.kind` is `vip`/`proxy` it runs the endpoint precheck first (confirming the switch command exists and running the optional `precheck_command`); it fences the old primary per `fencing.steps` with a default required `read_only` (SQL `super_read_only`/`read_only` when reachable, skipped when the old primary is already marked dead and unreachable); salvage steps point the candidate at a donor followed by `WAIT_FOR_EXECUTED_GTID_SET`; the candidate is promoted via `STOP REPLICA` / `RESET REPLICA ALL` / turning off read-only; only replicas reachable at planning time are repointed, dead replicas are skipped and left for later rejoin; the writer endpoint switch runs the external script via `writer_endpoint.command` or the `MHA_WRITER_ENDPOINT_COMMAND` env var; the optional `verify_command` validates the endpoint; `verify-cluster` uses SQL to confirm the new primary is writable and reachable replicas point at it
 
 ### 6.5 `monitor`
 
-职责：
+Responsibilities:
 
-- 主库健康探测
-- 多观察点二次确认
-- 网络分区误判抑制
-- manager 自身 lease 保护
+- Primary health probing
+- Multi-observer secondary confirmation
+- Network-partition false-positive suppression
+- Manager's own lease protection
 
-基本状态机：
+Basic state machine:
 
 ```text
 Init
@@ -209,42 +211,42 @@ Init
 -> HandoverToFailover
 ```
 
-实现细节（`internal/controller/monitor`）：
+Implementation details (`internal/controller/monitor`):
 
 ```
-Healthy ──probe失败──► Suspect ──达到阈值──► SecondaryCheck
-  ▲                       │                       │
-  │                    恢复正常                副本IO线程确认主库存活
-  └───────────────────────┘                       │
-                                             全部失败│
-                                                    ▼
-                                        ReconfirmTopology ──重新发现后主库存活──► Healthy
-                                                    │
-                                              主库仍然死亡
-                                                    ▼
-                                            DeadConfirmed ──► HandleFailover()
+Healthy ──probe fails──► Suspect ──threshold reached──► SecondaryCheck
+  ▲                        │                                │
+  │                      recovers                  replica IO thread confirms primary alive
+  └────────────────────────┘                                │
+                                                   all fail │
+                                                            ▼
+                                        ReconfirmTopology ──rediscovery shows primary alive──► Healthy
+                                                            │
+                                                    primary still dead
+                                                            ▼
+                                                    DeadConfirmed ──► HandleFailover()
 ```
 
-- **Healthy**：每个 interval 探测一次主库（SQL ping）。失败则进入 Suspect，成功重置 failureCount。
-- **Suspect**：继续探测，累计失败次数。达到 `failure_threshold` 后进入 SecondaryCheck；任意一次成功则回到 Healthy。
-- **SecondaryCheck**：依次检查各副本的 IO 线程是否仍连接主库；若配置了 `secondary_checks` 则额外询问指定 observer 节点。任意一个确认主库存活则回到 Healthy；全部失败则进入 ReconfirmTopology。
-- **ReconfirmTopology**：在 `reconfirm_timeout` 内重新执行完整拓扑发现。发现主库存活则回到 Healthy；主库仍死亡或发现失败则进入 DeadConfirmed。
-- **DeadConfirmed**：调用 `FailoverHandler.HandleFailover()`，manager 循环退出。需人工或运维自动化重启 manager 以监控新主库。
+- **Healthy**: probe (SQL ping) the primary every interval. Failure → Suspect; success resets failureCount.
+- **Suspect**: keep probing; accumulate failures. Reaching `failure_threshold` → SecondaryCheck; any success → Healthy.
+- **SecondaryCheck**: check each replica's IO thread to see whether it is still connected to the primary. If `secondary_checks` is configured, ask the specified observer nodes as well. Any confirmation that the primary is alive → Healthy; all fail → ReconfirmTopology.
+- **ReconfirmTopology**: within `reconfirm_timeout`, re-run full topology discovery. Primary alive → Healthy; primary still dead or discovery fails → DeadConfirmed.
+- **DeadConfirmed**: call `FailoverHandler.HandleFailover()`. The manager loop exits. A human or ops automation must restart the manager to monitor the new primary.
 
 ### 6.6 `failover`
 
-职责：
+Responsibilities:
 
-- old primary 确认死亡
-- old primary fencing
-- 候选主选择
-- 补数
-- 提升新主
-- 其他从库重指向
-- writer endpoint 切换
-- 结果校验
+- Confirm old primary is dead
+- Fence old primary
+- Select candidate
+- Salvage
+- Promote new primary
+- Repoint other replicas
+- Switch writer endpoint
+- Verify result
 
-状态机：
+State machine:
 
 ```text
 LoadSpec
@@ -263,16 +265,16 @@ LoadSpec
 
 ### 6.7 `switchover`
 
-职责：
+Responsibilities:
 
-- 在线切换前检查
-- 拒绝新写入
-- 锁原主
-- 等待候选主追平
-- 切换新主
-- 重定向旧主和其他从库
+- Pre-switch checks
+- Reject new writes
+- Lock the old primary
+- Wait for the candidate to catch up
+- Switch to the new primary
+- Repoint old primary and other replicas
 
-状态机：
+State machine:
 
 ```text
 Precheck
@@ -288,20 +290,20 @@ Precheck
 -> Complete
 ```
 
-说明：不设单独的 `FreezeWrites` 步骤。`LockOldPrimary`（设置 `super_read_only`）已在 MySQL 层阻止新写入，效果等同。代理层的流量切换由末尾的 `SwitchWriterEndpoint` 通过外部脚本完成，两者职责不重叠，无需中间额外步骤。
+Note: there is no separate `FreezeWrites` step. `LockOldPrimary` (setting `super_read_only`) already blocks new writes at the MySQL layer and is equivalent in effect. Proxy-layer traffic cutover is handled at the end by `SwitchWriterEndpoint` via an external script; the two responsibilities don't overlap, so no intermediate step is needed.
 
 ### 6.8 `replication`
 
-当前只做 GTID 路径。
+Currently GTID-only.
 
-包含两类逻辑：
+Two classes of logic:
 
-- `gtid`: 正常 GTID 自动切换与追平
-- `salvage`: 半同步降级或异步窗口下的补数
+- `gtid`: normal GTID auto-switching and catch-up
+- `salvage`: handling the semi-sync downgrade / async gap window
 
 ### 6.9 `fencing`
 
-统一隔离接口：
+Unified fencing interface:
 
 - `ReadOnlyFence`
 - `VIPFence`
@@ -309,87 +311,87 @@ Precheck
 - `CloudRouteFence`
 - `ProxyWriterFence`
 
-要求：
+Requirements:
 
-- fencing 是一等公民，不是附属脚本
-- failover 未完成 fencing 时，不能进入 writer endpoint 切换
-- v1 当前 SQL 层只读隔离只能算 `ReadOnlyFence`，不能等同于完整故障隔离
-- 真实生产 fencing 应优先支持 typed coordinator，再提供 shell 兼容适配层
+- Fencing is a first-class citizen, not an attached script
+- Failover must not reach writer endpoint switching until fencing is complete
+- The v1 SQL-level read-only fence counts only as `ReadOnlyFence`, not full fault isolation
+- Production fencing should prefer a typed coordinator; a shell-compat adapter is layered on top
 
-推荐实现顺序：
+Recommended implementation order:
 
-1. `ReadOnlyFence`：旧主可连时设置 `super_read_only=ON` / `read_only=ON`，作为最基础的 MySQL 层保护。
-2. `ProxyWriterFence` / `VIPFence`：通过 typed 接口或兼容脚本把写入口从旧主摘除，要求可验证新写入口只指向新主。
-3. `STONITHFence` / `CloudRouteFence`：在明确配置后执行电源、云路由、安全组或实例级隔离。
-4. `FenceCoordinator`：按配置顺序执行多种 fencing，并记录每个动作的结构化日志；任一必需 fencing 失败时，禁止进入 writer endpoint 切换。
+1. `ReadOnlyFence`: when the old primary is reachable, set `super_read_only=ON` / `read_only=ON` as the basic MySQL-layer guard.
+2. `ProxyWriterFence` / `VIPFence`: remove the writer entry from the old primary via a typed interface or a compat script, with verifiable evidence that writes now go only to the new primary.
+3. `STONITHFence` / `CloudRouteFence`: with explicit configuration, execute power, cloud route, security group, or instance-level isolation.
+4. `FenceCoordinator`: run configured fencing steps in order and emit structured logs for each action; any failure of a required fence must block writer endpoint switching.
 
-writer endpoint 切换负责“把新写流量导向新主”；fencing 负责“确保旧主不能继续接受写入”。这两个步骤必须分开建模，不能只靠一个 VIP 脚本同时承担全部语义。
+Writer endpoint switching answers "where should new writes go?"; fencing answers "can the old primary still accept writes?" These two must be modeled separately — one VIP script cannot carry both semantics.
 
 ### 6.10 `state`
 
-`RunStore` 接口用于单次操作（failover/switchover/monitor session）的**进程内**状态跟踪：每一步的结果写入 `RunRecord`/`RunEvent`，操作结束后由调用方汇总输出。这是内部协调机制，不是持久化数据库。
+The `RunStore` interface tracks **in-process** state for a single operation (a failover / switchover / monitor session): each step's result is written to `RunRecord`/`RunEvent`, and the caller summarizes the results when the operation ends. It is an internal coordination mechanism, not a persistence database.
 
-运维审计（历史记录、事后排查）依赖**结构化日志文件**（stderr JSON/logfmt 重定向到文件），用 `grep`/`jq` 查询即可。不引入 SQLite、嵌入式数据库或额外持久化存储。
+Ops auditing (history, post-incident review) relies on **structured log files** (stderr JSON/logfmt redirected to files), queried with `grep` / `jq`. We do not introduce SQLite, an embedded database, or any additional persistent store.
 
-约束：
+Constraints:
 
-- 不实现 `admin history` 所需的持久化数据库。
-- 不增加 `--state-db` / SQLite 运行库。
-- 需要保留的历史信息必须写入日志文件或由外部日志系统采集。
-- `RunStore` 只服务当前进程内的一次操作协调，不能作为跨进程恢复依据。
+- Do not implement the persistent database required by `admin history`.
+- Do not add `--state-db` / a SQLite runtime.
+- Any history that must be kept goes to a log file or is collected by an external log system.
+- `RunStore` only coordinates a single operation within the current process; it cannot be used as a cross-process recovery source.
 
-当前实现：`MemoryStore`（进程内，重启清空）+ `LocalLeaseManager`（单进程）。
+Current implementation: `MemoryStore` (in-process, reset on restart) + `LocalLeaseManager` (single-process).
 
-## 7. 半同步与降级异步后的补数策略
+## 7. Semi-sync and Async-gap Salvage Strategy
 
-这是新版本必须正面解决的问题。
+This is a problem the new version must address head-on.
 
-### 7.1 问题
+### 7.1 The problem
 
-即使开启半同步，也可能发生：
+Even with semi-sync enabled, the following can happen:
 
-- 半同步超时后自动降级为异步
-- 主库本地已提交，但从库未收到事务
-- 主库崩溃后，最新事务只存在于旧主本地 binlog
+- Semi-sync times out and downgrades to async
+- Transactions are committed locally on the primary but replicas never receive them
+- After the primary crashes, the newest transactions exist only in the old primary's local binlog
 
-这时如果直接提升最新从库，可能丢事务。
+Promoting the most advanced replica directly in this case risks losing transactions.
 
-### 7.2 设计目标
+### 7.2 Design goals
 
-在 GTID-only 前提下，补数逻辑必须明确支持三种策略：
+Under a GTID-only baseline, the salvage logic must explicitly support three policies:
 
 #### `strict`
 
-- 不能确认无丢失时，不自动提升
-- 需要补数成功后才允许 failover
+- Do not promote automatically until loss is ruled out
+- Salvage must succeed before failover is allowed
 
-适合高一致性场景。
+For high-consistency workloads.
 
 #### `salvage-if-possible`
 
-- 先尝试从旧主抽取缺失 GTID 事务
-- 抽取成功则应用到候选主
-- 抽取失败则中止自动切换
+- First try to extract missing GTID transactions from the old primary
+- Apply them to the candidate on success
+- Abort the auto switch if extraction fails
 
-这是推荐默认策略。
+This is the recommended default.
 
 #### `availability-first`
 
-- 若旧主不可访问，允许提升最先进从库
-- 明确记录“疑似丢失事务窗口”
-- 发出高优先级审计与告警
+- If the old primary is unreachable, allow promotion of the most advanced replica
+- Explicitly record the "suspected lost transaction window"
+- Emit a high-priority audit event and alert
 
-适合以可用性优先的业务。
+For workloads that prioritize availability.
 
-### 7.3 补数实现思路
+### 7.3 Salvage implementation approach
 
-补数优先级：
+Priority order:
 
-1. 旧主可 SQL 访问：直接查询 GTID、binlog 位点、只读状态
-2. 旧主不可 SQL 访问但 agent/SSH 可访问：读取本地 binlog 并抽取差异 GTID 事务
-3. 旧主完全不可达：根据策略决定中止或继续
+1. Old primary is SQL-reachable: query GTID, binlog position, and read-only state directly
+2. Old primary not SQL-reachable but reachable via agent/SSH: read local binlog and extract the missing GTID transactions
+3. Old primary fully unreachable: follow the configured policy to abort or continue
 
-抽象接口：
+Abstract interface:
 
 ```go
 type TransactionSalvager interface {
@@ -398,45 +400,45 @@ type TransactionSalvager interface {
 }
 ```
 
-### 7.4 为什么仍然需要补数
+### 7.4 Why salvage is still needed
 
-因为：
+Because:
 
-- GTID 只解决“定位和重连”，不自动解决“事务只存在旧主本地”的问题
-- 半同步不是绝对安全，只要能降级，就必须设计补数和保守策略
+- GTID only solves "locate and reconnect"; it does not automatically solve "transaction exists only on the old primary"
+- Semi-sync is not absolutely safe — as long as it can downgrade, salvage and conservative policies must be designed in
 
-## 8. 候选主选择规则
+## 8. Candidate Selection Rules
 
-候选主选择应分为两阶段：
+Candidate selection must be two-phase:
 
-### 8.1 资格过滤
+### 8.1 Eligibility filter
 
-必须满足：
+Must satisfy:
 
-- 可连接
-- 非 `no_master`
-- 复制线程状态健康
-- 延迟在可接受范围内
-- `log_bin` 开启
-- `read_only/super_read_only` 状态可控
-- 复制过滤与业务策略兼容
+- Reachable
+- Not `no_master`
+- Replication threads healthy
+- Lag within tolerance
+- `log_bin` enabled
+- `read_only` / `super_read_only` controllable
+- Replication filters compatible with the business policy
 
-### 8.2 评分排序
+### 8.2 Scoring rank
 
-建议维度：
+Suggested dimensions:
 
-- GTID 最先进
-- `candidate_master` 优先
-- 半同步状态更优
-- 同城/同可用区优先
-- 历史故障更少
-- 只读切换时延更低
+- Most advanced GTID
+- `candidate_master` preference
+- Better semi-sync state
+- Same city / same AZ preferred
+- Fewer historical failures
+- Lower read-only switch latency
 
-## 9. 管理面与运行面
+## 9. Management vs. Runtime Surface
 
 ### 9.1 CLI
 
-当前 v1 CLI：
+v1 CLI:
 
 - `mha manager`
 - `mha switch`
@@ -445,34 +447,34 @@ type TransactionSalvager interface {
 - `mha failover-execute`
 - `mha version`
 
-后续可评估但非当前目标：
+Considered later but not current targets:
 
 - `mha manager run-once`
 - `mha compat import-mha-cnf`
 - `mha admin status`
 
-明确不做：
+Explicitly not doing:
 
-- `mha admin history`：历史审计统一查询结构化日志文件。
-- `mha admin resume`：不为 v1 引入持久化状态数据库；中断恢复依赖人工检查日志后重新执行幂等步骤。
+- `mha admin history`: history auditing is served uniformly by structured log files.
+- `mha admin resume`: v1 does not introduce a persistent state database; mid-operation recovery relies on human log review plus re-running idempotent steps.
 
-### 9.2 管理 API
+### 9.2 Management API
 
-后续可预留：
+Reserved for later:
 
 - `GET /status`
 - `POST /switch`
 - `POST /stop`
 
-v1 只实现本地 CLI，REST/gRPC 作为后续扩展。管理 API 不应反向要求引入 SQLite 或内嵌状态数据库。
+v1 implements only the local CLI. REST/gRPC is a later extension. A management API must not retroactively force a SQLite or embedded state DB.
 
-## 10. hook 规范
+## 10. Hook Specification
 
-不要再让核心状态机直接拼 shell 参数。
+Do not let the core state machine concatenate shell arguments directly anymore.
 
-hook 只用于告警、审计、兼容旧回调和外部通知，不承载 VIP/proxy 主切换语义。VIP 漂移和代理写入口更新必须走 `writer_endpoint` 步骤；`failover.writer_switched` 是 writer endpoint 成功后的事件通知，不是触发 VIP 漂移的主入口。
+Hooks are for alerting, audit, legacy callback compat, and external notification — they must not carry VIP / proxy writer switch semantics. VIP drift and proxy writer updates must go through the `writer_endpoint` step; `failover.writer_switched` is a post-success notification, not the trigger for VIP drift.
 
-内部统一事件：
+Internal unified events:
 
 - `monitor.suspect`
 - `failover.start`
@@ -484,21 +486,21 @@ hook 只用于告警、审计、兼容旧回调和外部通知，不承载 VIP/p
 - `switchover.start`
 - `switchover.complete`
 
-对外支持两种实现：
+Two external implementations are supported:
 
 - typed Go plugin / RPC handler
 - shell compatibility adapter
 
-## 11. Group Replication / InnoDB Cluster 预留规范
+## 11. Group Replication / InnoDB Cluster Reserved Specification
 
-当前不实现，但必须留接口。
+Not implemented now, but the interface must be reserved.
 
-### 11.1 原则
+### 11.1 Principles
 
-- 不把 GR/Cluster 硬塞进异步复制控制器
-- 抽象“拓扑模式”和“writer 管理方式”
+- Do not cram GR/Cluster into the async replication controller
+- Abstract "topology mode" and "writer management scheme"
 
-### 11.2 预留接口
+### 11.2 Reserved interface
 
 ```go
 type TopologyMode interface {
@@ -510,106 +512,106 @@ type TopologyMode interface {
 }
 ```
 
-首批模式：
+First set of modes:
 
 - `AsyncSinglePrimaryMode`
 - `GroupReplicationSinglePrimaryMode`
 - `GroupReplicationMultiPrimaryMode`
 - `InnoDBClusterMode`
 
-### 11.3 需要提前考虑的点
+### 11.3 Points to consider in advance
 
-- GR 自带主选举，不能照搬异步复制的提升逻辑
-- InnoDB Cluster 的 writer 切换更依赖 metadata 和 Router
-- endpoint 切换和 fencing 责任边界不同
-- 监控维度不再只是 `SHOW REPLICA STATUS`
+- GR has its own primary election, so async replication promotion logic cannot be reused directly
+- InnoDB Cluster writer switching depends more on metadata and Router
+- Endpoint switching and fencing have different responsibility boundaries
+- Monitoring is no longer just `SHOW REPLICA STATUS`
 
-## 12. 测试策略
+## 12. Testing Strategy
 
-### 12.1 支持矩阵
+### 12.1 Support matrix
 
-必须持续测试：
+Must be continuously tested:
 
 - MySQL `8.4.x`
-- MySQL `9.7 ER/EA`（有可用环境时执行）
+- MySQL `9.7 ER/EA` (run when a usable environment exists)
 
-其中：
+Where:
 
-- `8.4` 是发布阻断矩阵
-- `9.7 ER/EA` 是前瞻兼容矩阵；当前没有环境时保留在测试蓝图，不阻断发布
+- `8.4` is the release-blocking matrix
+- `9.7 ER/EA` is the forward-compatibility matrix; when no environment is available it stays in the test blueprint without blocking releases
 
-### 12.2 必测场景
+### 12.2 Required scenarios
 
-- 主库 crash
-- manager 到主库网络隔离
-- 单从库延迟
-- 多从库延迟不一致
-- candidate 不可提升
-- old primary fencing 失败
-- 半同步正常切换
-- 半同步降级为异步后的补数成功
-- 半同步降级为异步后的补数失败
-- old primary 完全不可达时的严格模式
-- online switchover 中断后的人工恢复 runbook
-- hook 失败
-- 重复执行 failover/switchover 关键步骤的幂等性
-- fencing 失败后不得切换 writer endpoint
+- Primary crash
+- Manager isolated from primary by network
+- Single replica lag
+- Uneven lag across replicas
+- Candidate cannot be promoted
+- Old primary fencing fails
+- Normal semi-sync switch
+- Salvage succeeds after semi-sync downgrade to async
+- Salvage fails after semi-sync downgrade to async
+- Strict mode when old primary is fully unreachable
+- Online switchover interrupted mid-way — the manual recovery runbook
+- Hook failures
+- Idempotency of repeated failover/switchover key steps
+- Writer endpoint switch must not proceed if fencing failed
 
-## 13. 分阶段开发计划
+## 13. Phased Development Plan
 
 ### Phase 1
 
-- 配置模型
-- capability 探测
-- 拓扑发现
+- Config model
+- Capability detection
+- Topology discovery
 - `check-repl`
-- 基础 journal
+- Basic journal
 
 ### Phase 2
 
-- manager 监控循环
-- suspect/secondary check/reconfirm
-- 基础 failover 状态机
+- Manager monitor loop
+- Suspect / secondary check / reconfirm
+- Basic failover state machine
 
 ### Phase 3
 
 - GTID failover
-- 基础 `ReadOnlyFence`
-- writer endpoint 切换
-- 结构化日志审计
+- Basic `ReadOnlyFence`
+- Writer endpoint switch
+- Structured log audit
 
 ### Phase 4
 
-- online switchover
-- 人工 recover runbook
-- shell hook 兼容层
+- Online switchover
+- Manual recovery runbook
+- Shell hook compatibility layer
 
 ### Phase 5
 
-- 半同步降级后的补数逻辑
-- typed fencing coordinator
-- agent/SSH binlog salvage
-- 双 manager / 分布式 lease 评估（后续路线，不作为 v1 目标）
+- Salvage logic after semi-sync downgrade
+- Typed fencing coordinator
+- Agent/SSH binlog salvage
+- Dual manager / distributed lease evaluation (roadmap item, not a v1 target)
 
 ### Phase 6
 
-- GR/Cluster 模式实现
+- GR/Cluster mode implementation
 
-## 14. 明确不做的事
+## 14. Explicit Non-goals
 
-当前版本不做：
+This version will not:
 
-- 非 GTID 支持
-- 5.7/8.0/9.6 兼容
-- 为历史 MHA node 工具包继续补功能
-- 把 shell 脚本作为核心接口
-- 默认强依赖 SSH
-- SQLite、内嵌数据库或 `admin history`
-- 双 manager / 分布式 lease
+- Support non-GTID
+- Compat with 5.7 / 8.0 / 9.6
+- Keep extending features for the legacy MHA node toolkit
+- Make shell scripts the core interface
+- Strongly depend on SSH by default
+- Introduce SQLite, an embedded database, or `admin history`
+- Run dual manager / distributed lease
 
-## 15. 当前结论
+## 15. Conclusions
 
-本项目的架构路线应固定为：
+The project's architectural trajectory is fixed as:
 
 - `8.4 first`
 - `9.7 ER pre-adaptation in test blueprint`
@@ -621,4 +623,4 @@ type TopologyMode interface {
 - `single-manager by default, close to Perl MHA operating model`
 - `GR/Cluster extension ready`
 
-后续如与本文档冲突，必须先更新本文档，再改实现。
+Any future change that conflicts with this document must update this document first, then change the implementation.

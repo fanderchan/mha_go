@@ -1,5 +1,7 @@
 # Testing Guide
 
+[中文](testing_zh.md)
+
 This project has three test layers:
 
 - Unit and package tests for controller, topology, replication, state, hooks, and config behavior.

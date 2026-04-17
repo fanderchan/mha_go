@@ -300,11 +300,11 @@ journalctl -u mha-manager -f
 
 | 文档 | 说明 |
 |------|------|
-| [操作手册](operations.md) | 完整配置参考、MySQL 前置条件、操作流程 |
-| [架构蓝图](mha-go-blueprint.md) | 设计决策和模块职责 |
-| [部署指南](deploy-mha-go.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
-| [测试指南](testing.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
-| [变更日志](../CHANGELOG.md) | 版本发布历史 |
+| [操作手册](operations_zh.md) | 完整配置参考、MySQL 前置条件、操作流程 |
+| [架构蓝图](mha-go-blueprint_zh.md) | 设计决策和模块职责 |
+| [部署指南](deploy-mha-go_zh.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
+| [测试指南](testing_zh.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
+| [变更日志](../CHANGELOG_zh.md) | 版本发布历史 |
 | [配置示例：MySQL 8.4](../examples/cluster-8.4.yaml) | 完整注释的三节点集群配置 |
 
 ## 许可协议

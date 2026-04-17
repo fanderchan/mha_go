@@ -1,5 +1,7 @@
 # mha-go Operations Guide
 
+[中文](operations_zh.md)
+
 ## Table of contents
 
 1. [MySQL prerequisites](#1-mysql-prerequisites)

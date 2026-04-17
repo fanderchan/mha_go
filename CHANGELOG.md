@@ -1,5 +1,7 @@
 # Changelog
 
+[中文](CHANGELOG_zh.md)
+
 ## v0.1.4 - 2026-04-17
 
 - Extended the MySQL 8.4 Docker integration test to rejoin the recovered old primary after failover.
