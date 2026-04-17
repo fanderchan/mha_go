@@ -16,7 +16,7 @@ A Go rewrite of [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager) (Ma
 - **Online switchover** — graceful primary migration with zero data loss
 - **Automatic failover** — monitor daemon detects primary failure and promotes the best candidate
 - **GTID salvage** — recovers missing transactions from donors before promotion
-- **Pluggable hooks** — shell callbacks on every lifecycle event (alert, VIP move, etc.)
+- **Pluggable hooks** — shell callbacks for alerts, audit, and compatibility events
 - **Log-file audit trail** — persistent history is kept through structured logs, not SQLite
 - **Credential safety** — passwords via env vars or files; never hardcoded in config
 

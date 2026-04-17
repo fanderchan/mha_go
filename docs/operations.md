@@ -352,6 +352,8 @@ The manager exits after a successful failover. Update `cluster.yaml` so the new 
 
 If `hooks.shell_compat: true` and `hooks.command` is set, mha-go runs `sh -c <command>` on each event, passing context via environment variables.
 
+Hooks are for notification, audit, and compatibility callbacks. VIP/proxy movement is not driven by hooks; configure the primary writer move under [`writer_endpoint`](#7-writer-endpoint-integration). The `failover.writer_switched` event is emitted after the writer endpoint switch step succeeds.
+
 ### Common env vars (all events)
 
 | Variable | Description |
@@ -397,6 +399,8 @@ esac
 ## 7. Writer endpoint integration
 
 When `writer_endpoint.kind` is `vip` or `proxy`, mha-go calls the configured script after promoting the new primary. This step moves the write entry point to the new primary; it is not a complete fencing mechanism by itself. The script receives the context via environment variables:
+
+This is the supported path for VIP movement and proxy writer updates. Do not put the primary VIP move in `hooks.command`; hooks run as lifecycle callbacks and are not the authoritative writer endpoint switch.
 
 | Variable | Description |
 |----------|-------------|
