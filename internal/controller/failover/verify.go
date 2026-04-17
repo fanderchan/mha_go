@@ -40,6 +40,10 @@ func VerifyPostFailover(ctx context.Context, inspector *sqltransport.MySQLInspec
 		if n.ID == plan.OldPrimary.ID && plan.OldPrimary.Health == domain.NodeHealthDead {
 			continue
 		}
+		if stringInSlice(plan.SkippedReplicaIDs, n.ID) {
+			logger.Warn("verify: skipped unreachable replica", "node", n.ID)
+			continue
+		}
 		in, err := inspector.Inspect(ctx, n)
 		if err != nil {
 			return fmt.Errorf("inspect node %q: %w", n.ID, err)
@@ -61,6 +65,15 @@ func VerifyPostFailover(ctx context.Context, inspector *sqltransport.MySQLInspec
 		}
 	}
 	return nil
+}
+
+func stringInSlice(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func replicaPointsToCandidate(ch sqltransport.ReplicaChannelStatus, cand domain.NodeSpec) bool {

@@ -9,11 +9,13 @@ import (
 )
 
 type ActionRunner interface {
+	PrecheckWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 	FenceOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 	ApplySalvageAction(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, action domain.SalvageAction) error
 	PromoteCandidate(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 	RepointReplicas(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 	SwitchWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
+	VerifyWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 	VerifyCluster(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error
 }
 
@@ -23,6 +25,11 @@ type DryRunActionRunner struct {
 
 func NewDryRunActionRunner(logger *obs.Logger) *DryRunActionRunner {
 	return &DryRunActionRunner{logger: logger}
+}
+
+func (r *DryRunActionRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.FailoverPlan) error {
+	r.logger.Info("dry-run precheck writer endpoint", "candidate", plan.Candidate.ID)
+	return nil
 }
 
 func (r *DryRunActionRunner) FenceOldPrimary(_ context.Context, _ domain.ClusterSpec, plan *domain.FailoverPlan) error {
@@ -47,6 +54,11 @@ func (r *DryRunActionRunner) RepointReplicas(_ context.Context, _ domain.Cluster
 
 func (r *DryRunActionRunner) SwitchWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.FailoverPlan) error {
 	r.logger.Info("dry-run switch writer endpoint", "candidate", plan.Candidate.ID)
+	return nil
+}
+
+func (r *DryRunActionRunner) VerifyWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.FailoverPlan) error {
+	r.logger.Info("dry-run verify writer endpoint", "candidate", plan.Candidate.ID)
 	return nil
 }
 

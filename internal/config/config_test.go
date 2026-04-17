@@ -259,6 +259,51 @@ func TestDefaultsAreApplied(t *testing.T) {
 	}
 }
 
+func TestLoadFencingAndWriterEndpointCommands(t *testing.T) {
+	yaml := `
+name: app1
+fencing:
+  steps:
+    - kind: read_only
+      required: true
+    - kind: stonith
+      required: false
+      command: /usr/local/bin/fence-old-primary.sh
+      timeout: 5s
+writer_endpoint:
+  kind: vip
+  target: 192.0.2.10
+  command: /usr/local/bin/move-vip.sh
+  precheck_command: /usr/local/bin/check-vip.sh
+  verify_command: /usr/local/bin/verify-vip.sh
+nodes:
+  - id: db1
+    host: 10.0.0.1
+    version_series: "8.4"
+    expected_role: primary
+  - id: db2
+    host: 10.0.0.2
+    version_series: "8.4"
+`
+	path := writeTemp(t, ".yaml", yaml)
+	spec, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(spec.Fencing.Steps) != 2 {
+		t.Fatalf("fencing steps = %d, want 2", len(spec.Fencing.Steps))
+	}
+	if spec.Fencing.Steps[1].Required {
+		t.Fatal("second fencing step should be optional")
+	}
+	if spec.Fencing.Steps[1].Timeout.String() != "5s" {
+		t.Fatalf("timeout = %s, want 5s", spec.Fencing.Steps[1].Timeout)
+	}
+	if spec.WriterEndpoint.PrecheckCommand == "" || spec.WriterEndpoint.VerifyCommand == "" {
+		t.Fatalf("writer endpoint commands were not parsed: %+v", spec.WriterEndpoint)
+	}
+}
+
 func TestNoPrimaryDeclaredFirstNodeBecomePrimary(t *testing.T) {
 	yaml := `
 name: app1

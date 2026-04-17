@@ -3,6 +3,7 @@ package failover
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"mha-go/internal/domain"
@@ -120,7 +121,9 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 		SalvageActions:               recovery.SalvageActions,
 		SuggestedDonorIDs:            recovery.SuggestedDonorIDs,
 		RequiresFencing:              true,
-		RequiresWriterEndpointSwitch: spec.WriterEndpoint.Kind != "" && spec.WriterEndpoint.Kind != "none",
+		RequiresWriterEndpointSwitch: writerEndpointEnabled(spec.WriterEndpoint.Kind),
+		RepointReplicaIDs:            repointReplicaIDsForPlan(spec, view, candidate.ID),
+		SkippedReplicaIDs:            skippedReplicaIDsForPlan(spec, view, candidate.ID),
 	}
 	plan.Steps = buildExecutionSteps(plan)
 
@@ -259,6 +262,15 @@ func buildExecutionSteps(plan *domain.FailoverPlan) []domain.FailoverStep {
 		{Name: "confirm-primary-dead", Status: stepStatus(plan.PrimaryFailureConfirmed, "blocked"), Blocking: !plan.PrimaryFailureConfirmed, Reason: plan.PrimaryFailureReason},
 	}
 
+	if plan.RequiresWriterEndpointSwitch {
+		steps = append(steps, domain.FailoverStep{
+			Name:     "precheck-writer-endpoint",
+			Status:   gateStatus(plan.ExecutionPermitted),
+			Blocking: !plan.ExecutionPermitted,
+			Reason:   firstBlockingReason(plan.BlockingReasons),
+		})
+	}
+
 	if plan.RequiresFencing {
 		steps = append(steps, domain.FailoverStep{
 			Name:     "fence-old-primary",
@@ -300,6 +312,12 @@ func buildExecutionSteps(plan *domain.FailoverPlan) []domain.FailoverStep {
 			Blocking: !plan.ExecutionPermitted,
 			Reason:   firstBlockingReason(plan.BlockingReasons),
 		})
+		steps = append(steps, domain.FailoverStep{
+			Name:     "verify-writer-endpoint",
+			Status:   gateStatus(plan.ExecutionPermitted),
+			Blocking: !plan.ExecutionPermitted,
+			Reason:   firstBlockingReason(plan.BlockingReasons),
+		})
 	}
 
 	steps = append(steps, domain.FailoverStep{
@@ -330,6 +348,56 @@ func firstBlockingReason(reasons []string) string {
 		return ""
 	}
 	return reasons[0]
+}
+
+func writerEndpointEnabled(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "none", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func repointReplicaIDsForPlan(spec domain.ClusterSpec, view *domain.ClusterView, candidateID string) []string {
+	out := make([]string, 0, len(spec.Nodes))
+	for _, n := range spec.Nodes {
+		if n.ID == candidateID || n.NoMaster || n.ExpectedRole == domain.NodeRoleObserver {
+			continue
+		}
+		node, ok := nodeStateByID(view, n.ID)
+		if ok && node.Health == domain.NodeHealthDead {
+			continue
+		}
+		out = append(out, n.ID)
+	}
+	return out
+}
+
+func skippedReplicaIDsForPlan(spec domain.ClusterSpec, view *domain.ClusterView, candidateID string) []string {
+	out := make([]string, 0, len(spec.Nodes))
+	for _, n := range spec.Nodes {
+		if n.ID == candidateID || n.NoMaster || n.ExpectedRole == domain.NodeRoleObserver {
+			continue
+		}
+		node, ok := nodeStateByID(view, n.ID)
+		if ok && node.Health == domain.NodeHealthDead {
+			out = append(out, n.ID)
+		}
+	}
+	return out
+}
+
+func nodeStateByID(view *domain.ClusterView, id string) (domain.NodeState, bool) {
+	if view == nil {
+		return domain.NodeState{}, false
+	}
+	for _, node := range view.Nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return domain.NodeState{}, false
 }
 
 func dedupeStrings(in []string) []string {

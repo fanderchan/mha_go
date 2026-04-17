@@ -15,6 +15,7 @@ type fileSpec struct {
 	Topology       fileTopologySpec       `json:"topology" yaml:"topology" toml:"topology"`
 	Controller     fileControllerSpec     `json:"controller" yaml:"controller" toml:"controller"`
 	Replication    fileReplicationSpec    `json:"replication" yaml:"replication" toml:"replication"`
+	Fencing        fileFencingSpec        `json:"fencing" yaml:"fencing" toml:"fencing"`
 	WriterEndpoint fileWriterEndpointSpec `json:"writer_endpoint" yaml:"writer_endpoint" toml:"writer_endpoint"`
 	Nodes          []fileNodeSpec         `json:"nodes" yaml:"nodes" toml:"nodes"`
 	Hooks          fileHookSpec           `json:"hooks" yaml:"hooks" toml:"hooks"`
@@ -68,9 +69,22 @@ type fileSalvageSpec struct {
 }
 
 type fileWriterEndpointSpec struct {
-	Kind    string `json:"kind" yaml:"kind" toml:"kind"`
-	Target  string `json:"target" yaml:"target" toml:"target"`
-	Command string `json:"command" yaml:"command" toml:"command"`
+	Kind            string `json:"kind" yaml:"kind" toml:"kind"`
+	Target          string `json:"target" yaml:"target" toml:"target"`
+	Command         string `json:"command" yaml:"command" toml:"command"`
+	PrecheckCommand string `json:"precheck_command" yaml:"precheck_command" toml:"precheck_command"`
+	VerifyCommand   string `json:"verify_command" yaml:"verify_command" toml:"verify_command"`
+}
+
+type fileFencingSpec struct {
+	Steps []fileFencingStepSpec `json:"steps" yaml:"steps" toml:"steps"`
+}
+
+type fileFencingStepSpec struct {
+	Kind     string `json:"kind" yaml:"kind" toml:"kind"`
+	Required *bool  `json:"required" yaml:"required" toml:"required"`
+	Command  string `json:"command" yaml:"command" toml:"command"`
+	Timeout  string `json:"timeout" yaml:"timeout" toml:"timeout"`
 }
 
 type fileHookSpec struct {
@@ -230,9 +244,31 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 	}
 
 	spec.WriterEndpoint = domain.WriterEndpointSpec{
-		Kind:    fallback(f.WriterEndpoint.Kind, "none"),
-		Target:  f.WriterEndpoint.Target,
-		Command: strings.TrimSpace(f.WriterEndpoint.Command),
+		Kind:            fallback(f.WriterEndpoint.Kind, "none"),
+		Target:          f.WriterEndpoint.Target,
+		Command:         strings.TrimSpace(f.WriterEndpoint.Command),
+		PrecheckCommand: strings.TrimSpace(f.WriterEndpoint.PrecheckCommand),
+		VerifyCommand:   strings.TrimSpace(f.WriterEndpoint.VerifyCommand),
+	}
+	for i, step := range f.Fencing.Steps {
+		kind := strings.TrimSpace(step.Kind)
+		if kind == "" {
+			return spec, fmt.Errorf("fencing.steps[%d].kind must be set", i)
+		}
+		required := true
+		if step.Required != nil {
+			required = *step.Required
+		}
+		timeout, err := parseOptionalDuration(step.Timeout)
+		if err != nil {
+			return spec, fmt.Errorf("fencing.steps[%d].timeout: %w", i, err)
+		}
+		spec.Fencing.Steps = append(spec.Fencing.Steps, domain.FencingStepSpec{
+			Kind:     kind,
+			Required: required,
+			Command:  strings.TrimSpace(step.Command),
+			Timeout:  timeout,
+		})
 	}
 	spec.Hooks = domain.HookSpec{
 		ShellCompat: f.Hooks.ShellCompat,
@@ -317,6 +353,13 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 func parseDurationDefault(raw string, fallback time.Duration) (time.Duration, error) {
 	if strings.TrimSpace(raw) == "" {
 		return fallback, nil
+	}
+	return time.ParseDuration(raw)
+}
+
+func parseOptionalDuration(raw string) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
 	}
 	return time.ParseDuration(raw)
 }

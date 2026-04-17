@@ -299,3 +299,70 @@ func TestBuildPlanBlocksWritableCandidatePromotion(t *testing.T) {
 		t.Fatalf("expected writable candidate reason, got %+v", plan.PromoteReadinessReasons)
 	}
 }
+
+func TestBuildPlanSkipsDeadOrdinaryReplicaForRepoint(t *testing.T) {
+	spec := domain.ClusterSpec{
+		Name: "app1",
+		Controller: domain.ControllerSpec{
+			ID:    "manager-1",
+			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
+		},
+		Topology: domain.TopologySpec{
+			Kind:         domain.TopologyAsyncSinglePrimary,
+			SingleWriter: true,
+		},
+		Replication: domain.ReplicationSpec{
+			Mode:     domain.ReplicationModeGTID,
+			SemiSync: domain.SemiSyncSpec{Policy: domain.SemiSyncPreferred},
+			Salvage:  domain.SalvageSpec{Policy: domain.SalvageIfPossible},
+		},
+		Nodes: []domain.NodeSpec{
+			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},
+			{ID: "db2", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 100},
+			{ID: "db3", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 90},
+		},
+	}
+
+	view := &domain.ClusterView{
+		ClusterName: spec.Name,
+		PrimaryID:   "db1",
+		Nodes: []domain.NodeState{
+			{ID: "db1", Role: domain.NodeRolePrimary, Health: domain.NodeHealthDead, GTIDExecuted: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1-10"},
+			{
+				ID:                "db2",
+				Role:              domain.NodeRoleReplica,
+				Health:            domain.NodeHealthAlive,
+				CandidatePriority: 100,
+				GTIDExecuted:      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1-10",
+				ReadOnly:          true,
+				SuperReadOnly:     true,
+				Replica: &domain.ReplicaState{
+					SourceID:            "db1",
+					AutoPosition:        true,
+					IOThreadRunning:     false,
+					SQLThreadRunning:    true,
+					SecondsBehindSource: 0,
+				},
+			},
+			{ID: "db3", Role: domain.NodeRoleReplica, Health: domain.NodeHealthDead},
+		},
+	}
+
+	controller := NewController(
+		fakeDiscoverer{view: view},
+		topology.NewDefaultCandidateSelector(),
+		nil,
+		state.NewMemoryStore(),
+		obs.NewLogger("error"),
+	)
+	plan, err := controller.BuildPlan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	if len(plan.RepointReplicaIDs) != 0 {
+		t.Fatalf("repoint IDs = %+v, want none; old primary and db3 are dead", plan.RepointReplicaIDs)
+	}
+	if len(plan.SkippedReplicaIDs) != 2 {
+		t.Fatalf("skipped IDs = %+v, want db1 and db3", plan.SkippedReplicaIDs)
+	}
+}

@@ -19,6 +19,9 @@ type recordingRunner struct {
 	failOn string
 }
 
+func (r *recordingRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
+	return r.record("precheck-writer-endpoint")
+}
 func (r *recordingRunner) LockOldPrimary(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
 	return r.record("lock-old-primary")
 }
@@ -36,6 +39,9 @@ func (r *recordingRunner) RepointOldPrimary(_ context.Context, _ domain.ClusterS
 }
 func (r *recordingRunner) SwitchWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
 	return r.record("switch-writer-endpoint")
+}
+func (r *recordingRunner) VerifyWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
+	return r.record("verify-writer-endpoint")
 }
 func (r *recordingRunner) VerifyCluster(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
 	return r.record("verify")
@@ -161,8 +167,8 @@ func TestExecutePlanSkipsEndpointWhenNotRequired(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, name := range runner.called {
-		if name == "switch-writer-endpoint" {
-			t.Fatal("switch-writer-endpoint should not have been called when not required")
+		if name == "precheck-writer-endpoint" || name == "switch-writer-endpoint" || name == "verify-writer-endpoint" {
+			t.Fatalf("%s should not have been called when endpoint switch is not required", name)
 		}
 	}
 }
@@ -179,14 +185,28 @@ func TestExecutePlanIncludesEndpointWhenRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	found := false
+	foundSwitch := false
+	foundPrecheck := false
+	foundVerify := false
 	for _, name := range runner.called {
 		if name == "switch-writer-endpoint" {
-			found = true
+			foundSwitch = true
+		}
+		if name == "precheck-writer-endpoint" {
+			foundPrecheck = true
+		}
+		if name == "verify-writer-endpoint" {
+			foundVerify = true
 		}
 	}
-	if !found {
+	if !foundPrecheck {
+		t.Fatal("expected precheck-writer-endpoint to be called")
+	}
+	if !foundSwitch {
 		t.Fatal("expected switch-writer-endpoint to be called")
+	}
+	if !foundVerify {
+		t.Fatal("expected verify-writer-endpoint to be called")
 	}
 }
 

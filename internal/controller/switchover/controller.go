@@ -3,6 +3,7 @@ package switchover
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"mha-go/internal/domain"
@@ -73,7 +74,7 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 		return nil, err
 	}
 
-	requiresEndpointSwitch := spec.WriterEndpoint.Kind != "" && spec.WriterEndpoint.Kind != "none" && spec.WriterEndpoint.Kind != "off"
+	requiresEndpointSwitch := writerEndpointEnabled(spec.WriterEndpoint.Kind)
 	plan := &domain.SwitchoverPlan{
 		ClusterName:                  spec.Name,
 		CreatedAt:                    time.Now(),
@@ -94,6 +95,15 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 	return plan, nil
 }
 
+func writerEndpointEnabled(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "none", "off":
+		return false
+	default:
+		return true
+	}
+}
+
 // buildSwitchoverSteps assembles the ordered execution steps for the switchover.
 func buildSwitchoverSteps(spec domain.ClusterSpec, candidateID, origPrimaryID string, requiresEndpointSwitch bool) []domain.SwitchoverStep {
 	pending := func(name string) domain.SwitchoverStep {
@@ -109,10 +119,17 @@ func buildSwitchoverSteps(spec domain.ClusterSpec, candidateID, origPrimaryID st
 		pending("promote-candidate"),
 	}
 
+	if requiresEndpointSwitch {
+		steps = append([]domain.SwitchoverStep{pending("precheck-writer-endpoint")}, steps...)
+	}
+
 	// repoint-replicas only if there are other replicas besides candidate and old primary
 	hasOtherReplicas := false
 	for _, n := range spec.Nodes {
 		if n.ID == candidateID || n.ID == origPrimaryID || n.NoMaster {
+			continue
+		}
+		if n.ExpectedRole == domain.NodeRoleObserver {
 			continue
 		}
 		hasOtherReplicas = true
@@ -128,6 +145,7 @@ func buildSwitchoverSteps(spec domain.ClusterSpec, candidateID, origPrimaryID st
 
 	if requiresEndpointSwitch {
 		steps = append(steps, pending("switch-writer-endpoint"))
+		steps = append(steps, pending("verify-writer-endpoint"))
 	} else {
 		steps = append(steps, skipped("switch-writer-endpoint"))
 	}

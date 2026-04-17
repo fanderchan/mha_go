@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mha-go/internal/domain"
+	"mha-go/internal/fencing"
 	"mha-go/internal/obs"
 	sqltransport "mha-go/internal/transport/sql"
 	"mha-go/internal/writerendpoint"
@@ -25,21 +26,29 @@ func NewMySQLActionRunner(inspector *sqltransport.MySQLInspector, logger *obs.Lo
 	}
 }
 
+func (r *MySQLActionRunner) PrecheckWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
+	return writerendpoint.Precheck(ctx, spec, plan)
+}
+
 func (r *MySQLActionRunner) FenceOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
-	ns, ok := nodeSpecByID(spec, plan.OldPrimary.ID)
-	if !ok {
-		return fmt.Errorf("cluster spec has no node %q for old primary", plan.OldPrimary.ID)
-	}
-	db, err := r.sql.OpenDB(ctx, ns)
-	if err != nil {
-		if plan.OldPrimary.Health == domain.NodeHealthDead {
-			r.logger.Warn("fence skipped: old primary unreachable (treated as already isolated)", "node", plan.OldPrimary.ID)
-			return nil
+	coordinator := fencing.NewCoordinator(r.logger)
+	readOnly := func(ctx context.Context) error {
+		ns, ok := nodeSpecByID(spec, plan.OldPrimary.ID)
+		if !ok {
+			return fmt.Errorf("cluster spec has no node %q for old primary", plan.OldPrimary.ID)
 		}
-		return fmt.Errorf("connect to old primary %q for fencing: %w", plan.OldPrimary.ID, err)
+		db, err := r.sql.OpenDB(ctx, ns)
+		if err != nil {
+			if plan.OldPrimary.Health == domain.NodeHealthDead {
+				r.logger.Warn("read-only fence skipped: old primary unreachable (treated as already isolated)", "node", plan.OldPrimary.ID)
+				return nil
+			}
+			return fmt.Errorf("connect to old primary %q for fencing: %w", plan.OldPrimary.ID, err)
+		}
+		defer db.Close()
+		return sqltransport.FenceReadOnly(ctx, db, plan.OldPrimary.Capabilities)
 	}
-	defer db.Close()
-	return sqltransport.FenceReadOnly(ctx, db, plan.OldPrimary.Capabilities)
+	return coordinator.FenceOldPrimary(ctx, spec, plan.OldPrimary, plan.Candidate, readOnly)
 }
 
 func (r *MySQLActionRunner) ApplySalvageAction(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, action domain.SalvageAction) error {
@@ -94,7 +103,10 @@ func (r *MySQLActionRunner) RepointReplicas(ctx context.Context, spec domain.Clu
 	if err != nil {
 		return fmt.Errorf("resolve replication password for candidate: %w", err)
 	}
-	ids := repointReplicaNodeIDs(spec, plan.Candidate.ID)
+	ids := plan.RepointReplicaIDs
+	if ids == nil {
+		ids = repointReplicaNodeIDs(spec, plan.Candidate.ID)
+	}
 	for _, id := range ids {
 		ns, found := nodeSpecByID(spec, id)
 		if !found {
@@ -110,12 +122,16 @@ func (r *MySQLActionRunner) RepointReplicas(ctx context.Context, spec domain.Clu
 				r.logger.Warn("repoint skipped: old primary unreachable", "node", id)
 				continue
 			}
-			return fmt.Errorf("connect to replica %q for repoint: %w", id, err)
+			r.logger.Warn("repoint skipped: replica unreachable", "replica", id, "error", err)
+			plan.SkippedReplicaIDs = appendIfMissing(plan.SkippedReplicaIDs, id)
+			continue
 		}
 		repErr := sqltransport.RepointReplicaToSource(ctx, db, candSpec, sourcePassword)
 		_ = db.Close()
 		if repErr != nil {
-			return fmt.Errorf("repoint replica %q: %w", id, repErr)
+			r.logger.Warn("repoint skipped: replica repoint failed", "replica", id, "error", repErr)
+			plan.SkippedReplicaIDs = appendIfMissing(plan.SkippedReplicaIDs, id)
+			continue
 		}
 		r.logger.Info("repointed replica to new primary", "replica", id, "source", plan.Candidate.ID)
 	}
@@ -124,6 +140,10 @@ func (r *MySQLActionRunner) RepointReplicas(ctx context.Context, spec domain.Clu
 
 func (r *MySQLActionRunner) SwitchWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
 	return writerendpoint.Switch(ctx, spec, plan)
+}
+
+func (r *MySQLActionRunner) VerifyWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
+	return writerendpoint.Verify(ctx, spec, plan)
 }
 
 func (r *MySQLActionRunner) VerifyCluster(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
@@ -145,11 +165,20 @@ func repointReplicaNodeIDs(spec domain.ClusterSpec, candidateID string) []string
 		if n.ID == candidateID {
 			continue
 		}
-		if n.NoMaster {
+		if n.NoMaster || n.ExpectedRole == domain.NodeRoleObserver {
 			continue
 		}
 		out = append(out, n.ID)
 	}
 	sort.Strings(out)
 	return out
+}
+
+func appendIfMissing(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }

@@ -252,6 +252,8 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 
 func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, step domain.FailoverStep, salvageIndex *int) error {
 	switch {
+	case step.Name == "precheck-writer-endpoint":
+		return e.runner.PrecheckWriterEndpoint(ctx, spec, plan)
 	case step.Name == "fence-old-primary":
 		return e.runner.FenceOldPrimary(ctx, spec, plan)
 	case strings.HasPrefix(step.Name, "recover-from-"):
@@ -267,6 +269,8 @@ func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, pla
 		return e.runner.RepointReplicas(ctx, spec, plan)
 	case step.Name == "switch-writer-endpoint":
 		return e.runner.SwitchWriterEndpoint(ctx, spec, plan)
+	case step.Name == "verify-writer-endpoint":
+		return e.runner.VerifyWriterEndpoint(ctx, spec, plan)
 	case step.Name == "verify-cluster":
 		return e.runner.VerifyCluster(ctx, spec, plan)
 	default:

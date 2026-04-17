@@ -35,6 +35,18 @@ writer_endpoint:
   kind: vip
   target: 192.0.2.10
   # command: /usr/local/bin/mha-move-vip.sh   # failover-execute --dry-run=false 时执行（也可设 MHA_WRITER_ENDPOINT_COMMAND）
+  # precheck_command: /usr/local/bin/mha-check-vip.sh # promote 前验证新主能否承载 VIP
+  # verify_command: /usr/local/bin/mha-verify-vip.sh  # 切换后验证 VIP 已指向新主
+
+fencing:
+  steps:
+    - kind: read_only
+      required: true
+    # 可选：接入机房电源、云路由、安全组、代理写池摘除等外部隔离。
+    # - kind: stonith
+    #   required: false
+    #   command: /usr/local/bin/mha-fence-old-primary.sh
+    #   timeout: 10s
 
 hooks:
   shell_compat: true

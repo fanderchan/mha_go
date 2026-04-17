@@ -144,6 +144,8 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 
 func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan, name string) error {
 	switch name {
+	case "precheck-writer-endpoint":
+		return e.runner.PrecheckWriterEndpoint(ctx, spec, plan)
 	case "lock-old-primary":
 		return e.runner.LockOldPrimary(ctx, spec, plan)
 	case "wait-candidate-catchup":
@@ -156,6 +158,8 @@ func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, pla
 		return e.runner.RepointOldPrimary(ctx, spec, plan)
 	case "switch-writer-endpoint":
 		return e.runner.SwitchWriterEndpoint(ctx, spec, plan)
+	case "verify-writer-endpoint":
+		return e.runner.VerifyWriterEndpoint(ctx, spec, plan)
 	case "verify":
 		return e.runner.VerifyCluster(ctx, spec, plan)
 	default:

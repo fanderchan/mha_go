@@ -255,6 +255,12 @@ func runFailoverPlan(ctx context.Context, args []string) int {
 			fmt.Printf("    - %s\n", reason)
 		}
 	}
+	if len(plan.SkippedReplicaIDs) > 0 {
+		fmt.Println("  skipped replicas:")
+		for _, id := range plan.SkippedReplicaIDs {
+			fmt.Printf("    - %s (unreachable during planning; rejoin later)\n", id)
+		}
+	}
 	if len(plan.Steps) > 0 {
 		fmt.Println("  steps:")
 		for _, step := range plan.Steps {

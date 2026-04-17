@@ -87,6 +87,7 @@ type ClusterSpec struct {
 	Topology       TopologySpec
 	Controller     ControllerSpec
 	Replication    ReplicationSpec
+	Fencing        FencingSpec
 	WriterEndpoint WriterEndpointSpec
 	Nodes          []NodeSpec
 	Hooks          HookSpec
@@ -140,9 +141,22 @@ type SalvageSpec struct {
 }
 
 type WriterEndpointSpec struct {
-	Kind    string
-	Target  string
-	Command string // optional shell for VIP/proxy switch (kind vip/proxy)
+	Kind            string
+	Target          string
+	Command         string // optional shell for VIP/proxy switch (kind vip/proxy)
+	PrecheckCommand string // optional shell precheck before promotion
+	VerifyCommand   string // optional shell verification after switch
+}
+
+type FencingSpec struct {
+	Steps []FencingStepSpec
+}
+
+type FencingStepSpec struct {
+	Kind     string
+	Required bool
+	Command  string
+	Timeout  time.Duration
 }
 
 type HookSpec struct {
@@ -301,6 +315,8 @@ type FailoverPlan struct {
 	Steps                        []FailoverStep
 	RequiresFencing              bool
 	RequiresWriterEndpointSwitch bool
+	RepointReplicaIDs            []string
+	SkippedReplicaIDs            []string
 }
 
 type RecoveryGap struct {

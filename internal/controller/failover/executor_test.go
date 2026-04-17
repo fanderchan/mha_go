@@ -25,6 +25,9 @@ type failingRunner struct {
 	failStep string
 }
 
+func (r *failingRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.FailoverPlan) error {
+	return r.mayFail("precheck-writer-endpoint")
+}
 func (r *failingRunner) FenceOldPrimary(_ context.Context, _ domain.ClusterSpec, _ *domain.FailoverPlan) error {
 	return r.mayFail("fence-old-primary")
 }
@@ -39,6 +42,9 @@ func (r *failingRunner) RepointReplicas(_ context.Context, _ domain.ClusterSpec,
 }
 func (r *failingRunner) SwitchWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.FailoverPlan) error {
 	return r.mayFail("switch-writer-endpoint")
+}
+func (r *failingRunner) VerifyWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.FailoverPlan) error {
+	return r.mayFail("verify-writer-endpoint")
 }
 func (r *failingRunner) VerifyCluster(_ context.Context, _ domain.ClusterSpec, _ *domain.FailoverPlan) error {
 	return r.mayFail("verify-cluster")
@@ -200,6 +206,43 @@ func TestExecutorHooksOnFailure(t *testing.T) {
 	}
 	if hasComplete {
 		t.Error("failover.complete must not fire on failure")
+	}
+}
+
+func TestExecutorEndpointPrecheckFailureStopsBeforeFence(t *testing.T) {
+	spec := domain.ClusterSpec{
+		Name:       "app1",
+		Controller: domain.ControllerSpec{Lease: domain.LeaseSpec{TTL: 15 * time.Second}},
+	}
+	plan := &domain.FailoverPlan{
+		ClusterName: "app1",
+		LeaseKey:    "failover/app1",
+		LeaseOwner:  "manager-1",
+		OldPrimary:  domain.NodeState{ID: "db1"},
+		Candidate:   domain.NodeState{ID: "db2"},
+		Steps: []domain.FailoverStep{
+			{Name: "acquire-lease", Status: "completed"},
+			{Name: "confirm-primary-dead", Status: "completed"},
+			{Name: "precheck-writer-endpoint", Status: "pending"},
+			{Name: "fence-old-primary", Status: "pending"},
+			{Name: "promote-candidate", Status: "pending"},
+		},
+	}
+
+	dispatcher := &recordingDispatcher{}
+	runner := &failingRunner{failStep: "precheck-writer-endpoint"}
+	executor := NewExecutor(runner, nil, state.NewMemoryStore(), dispatcher, obs.NewLogger("error"))
+	execution, err := executor.ExecutePlan(context.Background(), spec, plan, false)
+	if err == nil {
+		t.Fatal("expected endpoint precheck error")
+	}
+	if execution.FailedStep != "precheck-writer-endpoint" {
+		t.Fatalf("failed step = %s, want precheck-writer-endpoint", execution.FailedStep)
+	}
+	for _, event := range dispatcher.events {
+		if event == "failover.fence" {
+			t.Fatal("fence hook must not fire after endpoint precheck failure")
+		}
 	}
 }
 

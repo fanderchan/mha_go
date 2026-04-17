@@ -154,6 +154,30 @@ controller:
 | `kind` | `none` | `none` / `off` (skip), `vip`, or `proxy`. |
 | `target` | | VIP address or proxy identifier (passed as `MHA_WRITER_ENDPOINT_TARGET` to the script). |
 | `command` | | Path to the script that moves the endpoint. Falls back to env `MHA_WRITER_ENDPOINT_COMMAND`. |
+| `precheck_command` | | Optional command run before promotion. Falls back to env `MHA_WRITER_ENDPOINT_PRECHECK_COMMAND`. |
+| `verify_command` | | Optional command run after endpoint switch. Falls back to env `MHA_WRITER_ENDPOINT_VERIFY_COMMAND`. |
+
+#### `fencing`
+
+If omitted, failover uses the default required SQL read-only fence (`super_read_only` / `read_only`) when the old primary is reachable.
+
+```yaml
+fencing:
+  steps:
+    - kind: read_only
+      required: true
+    - kind: stonith
+      required: false
+      command: /usr/local/bin/fence-old-primary.sh
+      timeout: 10s
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `steps[].kind` | required | `read_only`, `command`, `vip`, `proxy`, `stonith`, or `cloud_route`. |
+| `steps[].required` | `true` | Required fence failures abort failover. Optional failures are logged and failover continues. |
+| `steps[].command` | | Shell command for non-`read_only` fence steps. |
+| `steps[].timeout` | | Optional duration limit for the individual fence step. |
 
 #### `hooks`
 
@@ -234,13 +258,15 @@ mha switch --config cluster.yaml --new-primary db2 --dry-run=false
 - Requires the cluster to be healthy (assessment must pass). If the primary is already dead, use `failover-execute` instead.
 
 Steps executed:
-1. `lock-old-primary` — set `super_read_only=ON` on the current primary.
-2. `wait-candidate-catchup` — wait until the candidate has applied all GTIDs from the current primary.
-3. `promote-candidate` — stop replication on the candidate, set it writable.
-4. `repoint-replicas` — redirect other replicas to the new primary.
-5. `repoint-old-primary` — make the old primary a replica of the new primary.
-6. `switch-writer-endpoint` — execute the endpoint script (if configured).
-7. `verify` — confirm the new topology is correct.
+1. `precheck-writer-endpoint` — verify the endpoint switch can run (only when `writer_endpoint.kind` is `vip` or `proxy`).
+2. `lock-old-primary` — set `super_read_only=ON` on the current primary.
+3. `wait-candidate-catchup` — wait until the candidate has applied all GTIDs from the current primary.
+4. `promote-candidate` — stop replication on the candidate, set it writable.
+5. `repoint-replicas` — redirect other replicas to the new primary.
+6. `repoint-old-primary` — make the old primary a replica of the new primary.
+7. `switch-writer-endpoint` — execute the endpoint script (if configured).
+8. `verify-writer-endpoint` — run the endpoint verify script (if configured).
+9. `verify` — confirm the new topology is correct.
 
 ### `mha failover-plan`
 
@@ -375,6 +401,7 @@ When `writer_endpoint.kind` is `vip` or `proxy`, mha-go calls the configured scr
 | Variable | Description |
 |----------|-------------|
 | `MHA_CLUSTER` | Cluster name |
+| `MHA_WRITER_ENDPOINT_ACTION` | `precheck`, `switch`, or `verify` |
 | `MHA_WRITER_ENDPOINT_KIND` | `vip` or `proxy` |
 | `MHA_WRITER_ENDPOINT_TARGET` | Value of `writer_endpoint.target` |
 | `MHA_NEW_PRIMARY_ID` | New primary node ID |
@@ -382,6 +409,9 @@ When `writer_endpoint.kind` is `vip` or `proxy`, mha-go calls the configured scr
 | `MHA_NEW_PRIMARY_HOST` | New primary host only |
 | `MHA_NEW_PRIMARY_PORT` | New primary port |
 | `MHA_OLD_PRIMARY_ID` | Old primary node ID |
+| `MHA_OLD_PRIMARY_ADDRESS` | Old primary `host:port` |
+| `MHA_OLD_PRIMARY_HOST` | Old primary host only |
+| `MHA_OLD_PRIMARY_PORT` | Old primary port |
 
 The script is called as `sh -c <command>`. A non-zero exit code aborts the operation with an error.
 
@@ -390,6 +420,8 @@ writer_endpoint:
   kind: vip
   target: 192.0.2.10
   command: /usr/local/bin/move-vip.sh
+  precheck_command: /usr/local/bin/check-vip-move.sh
+  verify_command: /usr/local/bin/verify-vip.sh
 ```
 
 ```bash
@@ -418,7 +450,9 @@ The writer endpoint switch and fencing have different meanings:
 - fencing answers: “can the old primary still accept writes?”
 - writer endpoint switch answers: “where should new writes go now?”
 
-For failover, required fencing must complete before the writer endpoint is switched. If the old primary is completely unreachable, the configured salvage policy and the operator's availability/consistency choice determine whether to continue.
+For failover, writer endpoint precheck runs before SQL changes, and required fencing must complete before the writer endpoint is switched. If the old primary is completely unreachable, the configured salvage policy and the operator's availability/consistency choice determine whether to continue.
+
+Unreachable ordinary replicas do not block failover. A replica that is already dead during planning is skipped for repoint and logged for later rejoin. The candidate new primary is different: it must be SQL reachable, and if the configured VIP/proxy precheck requires SSH or another host-level access path to the candidate, that precheck must pass before promotion.
 
 ---
 

@@ -185,7 +185,7 @@ internal/
 - `failover-plan` 当前还会输出 execution gate：primary 是否确认故障、阻断原因、以及建议的 salvage action 列表
 - `failover-plan` 当前会生成 typed step outline，覆盖 `confirm`, `fence`, `salvage`, `promote`, `repoint`, `switch-writer-endpoint`, `verify`
 - `failover-execute --dry-run` 当前已能消费 typed step outline，并在第一个 blocking step 停止执行
-- `failover-execute --dry-run=false` 使用 `MySQLActionRunner`：对旧主做 SQL 只读隔离（可连则 `super_read_only`/`read_only`；旧主已在拓扑中标记为 dead 且不可连则跳过）、补数步骤将候选指向 donor 后 `WAIT_FOR_EXECUTED_GTID_SET`、候选主 `STOP REPLICA` / `RESET REPLICA ALL` / 关闭只读后提升、其余从库 `CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1` 重指向新主；写入口：`writer_endpoint.kind` 为 `vip`/`proxy` 时需配置 `writer_endpoint.command` 或环境变量 `MHA_WRITER_ENDPOINT_COMMAND` 执行外部脚本；`verify-cluster` 用 SQL 巡检新主可写且从库指向新主
+- `failover-execute --dry-run=false` 使用 `MySQLActionRunner`：`writer_endpoint.kind` 为 `vip`/`proxy` 时先执行 endpoint precheck（确认切换命令存在，并运行可选 `precheck_command`）；按 `fencing.steps` 对旧主做隔离，默认 required `read_only`（旧主可连则 `super_read_only`/`read_only`，旧主已在拓扑中标记为 dead 且不可连则跳过）；补数步骤将候选指向 donor 后 `WAIT_FOR_EXECUTED_GTID_SET`；候选主 `STOP REPLICA` / `RESET REPLICA ALL` / 关闭只读后提升；只重指向规划阶段可达的从库，普通 dead 从库会跳过并留待后续 rejoin；写入口切换通过 `writer_endpoint.command` 或环境变量 `MHA_WRITER_ENDPOINT_COMMAND` 执行外部脚本；可选 `verify_command` 验证 endpoint；`verify-cluster` 用 SQL 巡检新主可写且可达从库指向新主
 
 ### 6.5 `monitor`
 
@@ -276,12 +276,14 @@ LoadSpec
 
 ```text
 Precheck
+-> PrecheckWriterEndpoint
 -> LockOldPrimary
 -> WaitCandidateCatchUp
 -> PromoteCandidate
 -> RepointReplicas
 -> RepointOldPrimary
 -> SwitchWriterEndpoint
+-> VerifyWriterEndpoint
 -> Verify
 -> Complete
 ```

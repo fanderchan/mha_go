@@ -14,6 +14,8 @@ import (
 
 // ActionRunner executes the individual steps of an online switchover.
 type ActionRunner interface {
+	// PrecheckWriterEndpoint checks that the VIP/proxy switch can run before locking writes.
+	PrecheckWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// LockOldPrimary sets the original primary read-only to stop new writes.
 	LockOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// WaitCandidateCatchUp fetches the original primary's current GTID and blocks until
@@ -27,6 +29,8 @@ type ActionRunner interface {
 	RepointOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// SwitchWriterEndpoint moves the VIP / proxy entry to the new primary.
 	SwitchWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
+	// VerifyWriterEndpoint confirms the VIP / proxy entry points at the new primary.
+	VerifyWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// VerifyCluster confirms the new primary is writable and replicas (including old primary) point to it.
 	VerifyCluster(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 }
@@ -39,6 +43,11 @@ type DryRunActionRunner struct {
 
 func NewDryRunActionRunner(logger *obs.Logger) *DryRunActionRunner {
 	return &DryRunActionRunner{logger: logger}
+}
+
+func (r *DryRunActionRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	r.logger.Info("dry-run precheck writer endpoint", "candidate", plan.Candidate.ID)
+	return nil
 }
 
 func (r *DryRunActionRunner) LockOldPrimary(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
@@ -71,6 +80,11 @@ func (r *DryRunActionRunner) SwitchWriterEndpoint(_ context.Context, _ domain.Cl
 	return nil
 }
 
+func (r *DryRunActionRunner) VerifyWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	r.logger.Info("dry-run verify writer endpoint", "new_primary", plan.Candidate.ID)
+	return nil
+}
+
 func (r *DryRunActionRunner) VerifyCluster(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
 	r.logger.Info("dry-run verify cluster", "new_primary", plan.Candidate.ID)
 	return nil
@@ -85,6 +99,10 @@ type MySQLActionRunner struct {
 
 func NewMySQLActionRunner(inspector *sqltransport.MySQLInspector, logger *obs.Logger) *MySQLActionRunner {
 	return &MySQLActionRunner{sql: inspector, logger: logger}
+}
+
+func (r *MySQLActionRunner) PrecheckWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	return writerendpoint.PrecheckWithNodes(ctx, spec, plan.Candidate, plan.OriginalPrimary)
 }
 
 func (r *MySQLActionRunner) LockOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
@@ -206,6 +224,10 @@ func (r *MySQLActionRunner) SwitchWriterEndpoint(ctx context.Context, spec domai
 	return writerendpoint.SwitchForSwitchover(ctx, spec, plan)
 }
 
+func (r *MySQLActionRunner) VerifyWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	return writerendpoint.VerifyWithNodes(ctx, spec, plan.Candidate, plan.OriginalPrimary)
+}
+
 func (r *MySQLActionRunner) VerifyCluster(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
 	return VerifyPostSwitchover(ctx, r.sql, spec, plan, r.logger)
 }
@@ -229,7 +251,7 @@ func repointReplicaNodeIDs(spec domain.ClusterSpec, candidateID, origPrimaryID s
 		if n.ID == candidateID || n.ID == origPrimaryID {
 			continue
 		}
-		if n.NoMaster {
+		if n.NoMaster || n.ExpectedRole == domain.NodeRoleObserver {
 			continue
 		}
 		out = append(out, n.ID)
