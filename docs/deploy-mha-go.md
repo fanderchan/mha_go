@@ -229,6 +229,8 @@ systemctl enable --now mha-manager
 journalctl -u mha-manager -f
 ```
 
+manager 在成功故障转移后会正常退出。此时先更新 `/etc/mha/cluster.yaml` 中的主从角色，用 `mha check-repl --config /etc/mha/cluster.yaml` 验证新拓扑，再显式执行 `systemctl restart mha-manager`。`Restart=on-failure` 只用于崩溃或非零退出，不应在配置仍指向旧主时自动重启监控。
+
 ## 常见问题
 
 ### mha 用户权限不足（RELOAD/SUPER 缺失）

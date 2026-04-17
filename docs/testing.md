@@ -5,6 +5,7 @@ This project has three test layers:
 - Unit and package tests for controller, topology, replication, state, hooks, and config behavior.
 - GitHub Actions CI for formatting, module consistency, `go vet`, unit tests, and static Linux builds.
 - A local MySQL 8.4 integration smoke test that starts a GTID single-primary topology in Docker.
+- A future MySQL 9.7 ER/EA validation track, kept in the test blueprint until a reliable environment is available.
 
 ## Local Unit Checks
 
@@ -63,6 +64,20 @@ Useful environment variables:
 | `MHA_IT_PROJECT` | generated | Docker Compose project name. |
 
 When `MHA_IT_KEEP=1`, the script prints the Docker Compose project name and temp work directory before exiting.
+
+## MySQL 9.7 ER/EA Validation Plan
+
+MySQL 9.7 ER/EA is a forward-compatibility target, but it is not a current release blocker without a stable test environment.
+
+When a 9.7 environment is available, validate the same scenarios as the 8.4 integration test first:
+
+- `check-repl`
+- dry-run and real switchover
+- blocked failover while the primary is alive
+- real failover after primary stop
+- old-primary rejoin with GTID auto-position
+
+Add 9.7-specific checks only through capability detection. Do not add version branches that weaken the 8.4 release baseline.
 
 ## CI
 

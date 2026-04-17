@@ -1,6 +1,6 @@
 # MHA Go 重构蓝图
 
-更新时间：2026-04-14  
+更新时间：2026-04-17
 状态：基线设计文档
 
 ## 1. 文档目的
@@ -34,6 +34,7 @@
 
 - 截至 2026-04-14，`8.4` 是稳定长期支持主线。
 - `9.7` 仍按 `ER/EA` 目标对待，代码必须以能力探测为核心，避免写死版本假设。
+- 当前没有稳定 `9.7` 验证环境时，`9.7` 只进入测试蓝图和前向兼容设计，不作为当前发布阻断项。
 
 ### 2.2 当前拓扑范围
 
@@ -56,7 +57,7 @@
 ### 3.1 0.58 的主要问题
 
 - 依赖 Perl、SSH、公钥、node 工具包，部署和维护成本高
-- 监控、故障切换、在线切换逻辑分散，状态不可重放
+- 监控、故障切换、在线切换逻辑分散，执行过程难以审计
 - 中途失败时恢复能力弱，更多依赖人工介入
 - 观测性不足，缺少结构化事件流和统一历史记录
 - 外部 hook 以 shell 参数拼接为主，接口脆弱
@@ -66,10 +67,10 @@
 ### 3.2 新版本的解决方向
 
 - 单二进制 Go 程序，依赖最小化
-- 以持久化状态机驱动监控、故障切换和在线切换
+- 以清晰状态机驱动监控、故障切换和在线切换
 - 以 `GTID-first` 为核心，不再让非 GTID 路径主导架构
 - 以能力探测代替大量版本硬编码
-- 引入事件日志、运行日志、审计日志、指标
+- 引入结构化事件日志、运行日志、审计日志、指标
 - hook typed 化，shell 兼容作为适配层
 - 可选 agent 模式，逐步弱化对裸 SSH 的依赖
 
@@ -78,7 +79,7 @@
 - `GTID-only`
 - `State-machine first`
 - `Capability-driven`
-- `Journaled and resumable`
+- `Journaled by structured logs`
 - `Agent-optional`
 - `Production on 8.4 first`
 - `9.7 ER compatibility by detection, not assumption`
@@ -90,8 +91,9 @@ cmd/mha
 ├─ manager        长驻监控 + 自动故障切换
 ├─ switch         在线切换
 ├─ check-repl     拓扑与复制健康检查
-├─ admin          status / stop / resume / history
-└─ agent          可选节点代理
+├─ failover-plan  故障切换计划
+├─ failover-execute 故障切换执行
+└─ version        版本信息
 
 internal/
 ├─ config         配置模型与兼容旧 MHA 配置
@@ -104,9 +106,8 @@ internal/
 ├─ replication    GTID 复制控制与补数逻辑
 ├─ fencing        VIP / STONITH / endpoint 切换
 ├─ hooks          typed hooks + shell 兼容层
-├─ state          持久化状态、事件、运行记录
+├─ state          进程内状态、事件、运行记录
 ├─ transport      SQL / SSH / Agent RPC
-├─ admin          管理面
 └─ obs            日志、指标、审计、事件查询
 ```
 
@@ -310,12 +311,30 @@ Precheck
 
 - fencing 是一等公民，不是附属脚本
 - failover 未完成 fencing 时，不能进入 writer endpoint 切换
+- v1 当前 SQL 层只读隔离只能算 `ReadOnlyFence`，不能等同于完整故障隔离
+- 真实生产 fencing 应优先支持 typed coordinator，再提供 shell 兼容适配层
+
+推荐实现顺序：
+
+1. `ReadOnlyFence`：旧主可连时设置 `super_read_only=ON` / `read_only=ON`，作为最基础的 MySQL 层保护。
+2. `ProxyWriterFence` / `VIPFence`：通过 typed 接口或兼容脚本把写入口从旧主摘除，要求可验证新写入口只指向新主。
+3. `STONITHFence` / `CloudRouteFence`：在明确配置后执行电源、云路由、安全组或实例级隔离。
+4. `FenceCoordinator`：按配置顺序执行多种 fencing，并记录每个动作的结构化日志；任一必需 fencing 失败时，禁止进入 writer endpoint 切换。
+
+writer endpoint 切换负责“把新写流量导向新主”；fencing 负责“确保旧主不能继续接受写入”。这两个步骤必须分开建模，不能只靠一个 VIP 脚本同时承担全部语义。
 
 ### 6.10 `state`
 
 `RunStore` 接口用于单次操作（failover/switchover/monitor session）的**进程内**状态跟踪：每一步的结果写入 `RunRecord`/`RunEvent`，操作结束后由调用方汇总输出。这是内部协调机制，不是持久化数据库。
 
-运维审计（历史记录、事后排查）依赖**结构化日志**（stderr JSON/logfmt 重定向到文件），用 `grep`/`jq` 查询即可。不引入额外的持久化存储。
+运维审计（历史记录、事后排查）依赖**结构化日志文件**（stderr JSON/logfmt 重定向到文件），用 `grep`/`jq` 查询即可。不引入 SQLite、嵌入式数据库或额外持久化存储。
+
+约束：
+
+- 不实现 `admin history` 所需的持久化数据库。
+- 不增加 `--state-db` / SQLite 运行库。
+- 需要保留的历史信息必须写入日志文件或由外部日志系统采集。
+- `RunStore` 只服务当前进程内的一次操作协调，不能作为跨进程恢复依据。
 
 当前实现：`MemoryStore`（进程内，重启清空）+ `LocalLeaseManager`（单进程）。
 
@@ -415,30 +434,35 @@ type TransactionSalvager interface {
 
 ### 9.1 CLI
 
-建议命令：
+当前 v1 CLI：
 
-- `mha manager start`
-- `mha manager run-once`
+- `mha manager`
 - `mha switch`
 - `mha check-repl`
-- `mha admin status`
-- `mha admin history`
-- `mha admin stop`
-- `mha admin resume`
+- `mha failover-plan`
+- `mha failover-execute`
+- `mha version`
+
+后续可评估但非当前目标：
+
+- `mha manager run-once`
 - `mha compat import-mha-cnf`
+- `mha admin status`
+
+明确不做：
+
+- `mha admin history`：历史审计统一查询结构化日志文件。
+- `mha admin resume`：不为 v1 引入持久化状态数据库；中断恢复依赖人工检查日志后重新执行幂等步骤。
 
 ### 9.2 管理 API
 
-建议预留：
+后续可预留：
 
 - `GET /status`
-- `GET /runs`
-- `GET /runs/{id}`
 - `POST /switch`
 - `POST /stop`
-- `POST /resume`
 
-v1 可先只实现本地 CLI，REST/gRPC 作为后续扩展。
+v1 只实现本地 CLI，REST/gRPC 作为后续扩展。管理 API 不应反向要求引入 SQLite 或内嵌状态数据库。
 
 ## 10. hook 规范
 
@@ -503,12 +527,12 @@ type TopologyMode interface {
 必须持续测试：
 
 - MySQL `8.4.x`
-- MySQL `9.7 ER/EA`
+- MySQL `9.7 ER/EA`（有可用环境时执行）
 
 其中：
 
 - `8.4` 是发布阻断矩阵
-- `9.7 ER/EA` 是前瞻兼容矩阵
+- `9.7 ER/EA` 是前瞻兼容矩阵；当前没有环境时保留在测试蓝图，不阻断发布
 
 ### 12.2 必测场景
 
@@ -522,9 +546,10 @@ type TopologyMode interface {
 - 半同步降级为异步后的补数成功
 - 半同步降级为异步后的补数失败
 - old primary 完全不可达时的严格模式
-- online switchover 中断恢复
+- online switchover 中断后的人工恢复 runbook
 - hook 失败
-- resume 幂等
+- 重复执行 failover/switchover 关键步骤的幂等性
+- fencing 失败后不得切换 writer endpoint
 
 ## 13. 分阶段开发计划
 
@@ -545,21 +570,22 @@ type TopologyMode interface {
 ### Phase 3
 
 - GTID failover
-- fencing
+- 基础 `ReadOnlyFence`
 - writer endpoint 切换
-- 运行记录与审计
+- 结构化日志审计
 
 ### Phase 4
 
 - online switchover
-- resume / recover
+- 人工 recover runbook
 - shell hook 兼容层
 
 ### Phase 5
 
 - 半同步降级后的补数逻辑
-- agent 模式
-- 双 manager lease
+- typed fencing coordinator
+- agent/SSH binlog salvage
+- 双 manager / 分布式 lease 评估（后续路线，不作为 v1 目标）
 
 ### Phase 6
 
@@ -574,18 +600,21 @@ type TopologyMode interface {
 - 为历史 MHA node 工具包继续补功能
 - 把 shell 脚本作为核心接口
 - 默认强依赖 SSH
+- SQLite、内嵌数据库或 `admin history`
+- 双 manager / 分布式 lease
 
 ## 15. 当前结论
 
 本项目的架构路线应固定为：
 
 - `8.4 first`
-- `9.7 ER pre-adaptation`
+- `9.7 ER pre-adaptation in test blueprint`
 - `GTID-only`
 - `semi-sync aware`
 - `async gap salvage capable`
 - `state-machine driven`
-- `journaled and resumable`
+- `journaled by structured log files`
+- `single-manager by default, close to Perl MHA operating model`
 - `GR/Cluster extension ready`
 
 后续如与本文档冲突，必须先更新本文档，再改实现。

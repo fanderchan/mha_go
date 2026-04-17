@@ -17,6 +17,7 @@ A Go rewrite of [MySQL MHA](https://github.com/yoshinorim/mha4mysql-manager) (Ma
 - **Automatic failover** — monitor daemon detects primary failure and promotes the best candidate
 - **GTID salvage** — recovers missing transactions from donors before promotion
 - **Pluggable hooks** — shell callbacks on every lifecycle event (alert, VIP move, etc.)
+- **Log-file audit trail** — persistent history is kept through structured logs, not SQLite
 - **Credential safety** — passwords via env vars or files; never hardcoded in config
 
 ## Supported MySQL Versions
@@ -251,7 +252,7 @@ systemctl enable --now mha-manager
 journalctl -u mha-manager -f
 ```
 
-> **Note**: The manager exits after a successful failover. `Restart=on-failure` ensures it restarts for the next monitoring cycle after you update the config to reflect the new topology.
+> **Note**: The manager exits after a successful failover. Update the config to reflect the new topology, verify it with `check-repl`, then restart the service explicitly. `Restart=on-failure` only covers crashes or non-zero exits.
 
 ## Documentation
 

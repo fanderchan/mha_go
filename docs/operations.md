@@ -9,7 +9,9 @@
 5. [Typical workflows](#5-typical-workflows)
 6. [Hook events](#6-hook-events)
 7. [Writer endpoint integration](#7-writer-endpoint-integration)
-8. [Salvage policy](#8-salvage-policy)
+8. [Fencing model](#8-fencing-model)
+9. [Operational history](#9-operational-history)
+10. [Salvage policy](#10-salvage-policy)
 
 ---
 
@@ -142,7 +144,7 @@ controller:
 | `semi_sync.policy` | `preferred` | `disabled`, `preferred`, or `required`. |
 | `semi_sync.wait_for_replica_count` | `0` | Minimum semi-sync replicas required (only enforced at check time). |
 | `semi_sync.timeout` | `5s` | Semi-sync ACK timeout (informational; actual timeout set on MySQL). |
-| `salvage.policy` | `salvage-if-possible` | See [Salvage policy](#8-salvage-policy). |
+| `salvage.policy` | `salvage-if-possible` | See [Salvage policy](#10-salvage-policy). |
 | `salvage.timeout` | `30s` | Maximum time to wait for GTID catch-up during salvage. |
 
 #### `writer_endpoint`
@@ -316,7 +318,7 @@ mha failover-execute --config cluster.yaml --dry-run=false
 ./mha manager --config cluster.yaml --log-format json 2>> /var/log/mha.log
 ```
 
-The manager exits after a failover. Configure your init system (`systemd`, `supervisor`) with `Restart=on-failure` if you want it to restart for the next observation cycle after you have updated the config.
+The manager exits after a successful failover. Update `cluster.yaml` so the new primary is marked as primary, verify the topology, then restart the manager explicitly. `Restart=on-failure` is still useful for crashes, but a successful failover exits cleanly and should not be restarted blindly with stale topology configuration.
 
 ---
 
@@ -368,7 +370,7 @@ esac
 
 ## 7. Writer endpoint integration
 
-When `writer_endpoint.kind` is `vip` or `proxy`, mha-go calls the configured script after promoting the new primary. The script receives the context via environment variables:
+When `writer_endpoint.kind` is `vip` or `proxy`, mha-go calls the configured script after promoting the new primary. This step moves the write entry point to the new primary; it is not a complete fencing mechanism by itself. The script receives the context via environment variables:
 
 | Variable | Description |
 |----------|-------------|
@@ -401,7 +403,47 @@ arping -U -c 3 -I eth0 "$MHA_WRITER_ENDPOINT_TARGET" || true
 
 ---
 
-## 8. Salvage policy
+## 8. Fencing model
+
+Fencing prevents the old primary from accepting writes after a failover decision. mha-go currently performs SQL-side read-only fencing when the old primary is reachable. Production deployments should treat this as the first layer, not the entire isolation story.
+
+Recommended order:
+
+1. SQL read-only fence: set `super_read_only=ON` / `read_only=ON` on the old primary when it is reachable.
+2. Writer-entry fence: remove the old primary from proxy writer pools or move the VIP away from it.
+3. Infrastructure fence: use STONITH, cloud route changes, security groups, or instance shutdown when configured and operationally acceptable.
+
+The writer endpoint switch and fencing have different meanings:
+
+- fencing answers: “can the old primary still accept writes?”
+- writer endpoint switch answers: “where should new writes go now?”
+
+For failover, required fencing must complete before the writer endpoint is switched. If the old primary is completely unreachable, the configured salvage policy and the operator's availability/consistency choice determine whether to continue.
+
+---
+
+## 9. Operational history
+
+mha-go does not use SQLite or an embedded state database for history. Runtime `RunStore` data is in-process only and is lost on restart.
+
+For persistent audit history, run with structured logs and redirect stderr to a log file or journald:
+
+```bash
+./mha manager --config /etc/mha/cluster.yaml --log-format json 2>> /var/log/mha-go/manager.jsonl
+```
+
+Examples:
+
+```bash
+journalctl -u mha-manager --output cat | jq 'select(.cluster=="my-cluster")'
+jq 'select(.level=="ERROR" or .level=="WARN")' /var/log/mha-go/manager.jsonl
+```
+
+There is intentionally no `admin history` command in v1. Keep log retention, rotation, and central collection in the host logging stack.
+
+---
+
+## 10. Salvage policy
 
 When a failover happens, the candidate may be missing transactions that were committed on the old primary but not yet replicated. The salvage policy controls how mha-go handles this situation.
 
