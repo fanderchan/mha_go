@@ -146,6 +146,8 @@ func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, pla
 	switch name {
 	case "precheck-writer-endpoint":
 		return e.runner.PrecheckWriterEndpoint(ctx, spec, plan)
+	case "lock-candidate":
+		return e.runner.LockCandidate(ctx, spec, plan)
 	case "lock-old-primary":
 		return e.runner.LockOldPrimary(ctx, spec, plan)
 	case "wait-candidate-catchup":

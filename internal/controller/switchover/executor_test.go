@@ -22,6 +22,9 @@ type recordingRunner struct {
 func (r *recordingRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
 	return r.record("precheck-writer-endpoint")
 }
+func (r *recordingRunner) LockCandidate(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
+	return r.record("lock-candidate")
+}
 func (r *recordingRunner) LockOldPrimary(_ context.Context, _ domain.ClusterSpec, _ *domain.SwitchoverPlan) error {
 	return r.record("lock-old-primary")
 }
@@ -133,7 +136,7 @@ func TestExecutePlanSucceeds(t *testing.T) {
 	}
 
 	// All pending steps must have been called.
-	wantCalled := []string{"lock-old-primary", "wait-candidate-catchup", "promote-candidate", "repoint-replicas", "repoint-old-primary", "verify"}
+	wantCalled := []string{"lock-candidate", "lock-old-primary", "wait-candidate-catchup", "promote-candidate", "repoint-replicas", "repoint-old-primary", "verify"}
 	if len(runner.called) != len(wantCalled) {
 		t.Fatalf("called steps %v, want %v", runner.called, wantCalled)
 	}

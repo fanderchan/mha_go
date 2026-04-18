@@ -10,8 +10,12 @@ import (
 	sqltransport "mha-go/internal/transport/sql"
 )
 
+type nodeInspector interface {
+	Inspect(ctx context.Context, node domain.NodeSpec) (*sqltransport.Inspection, error)
+}
+
 // VerifyPostFailover checks that the new primary is writable and other nodes replicate from it.
-func VerifyPostFailover(ctx context.Context, inspector *sqltransport.MySQLInspector, spec domain.ClusterSpec, plan *domain.FailoverPlan, logger *obs.Logger) error {
+func VerifyPostFailover(ctx context.Context, inspector nodeInspector, spec domain.ClusterSpec, plan *domain.FailoverPlan, logger *obs.Logger) error {
 	candSpec, ok := nodeSpecByID(spec, plan.Candidate.ID)
 	if !ok {
 		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
@@ -49,8 +53,7 @@ func VerifyPostFailover(ctx context.Context, inspector *sqltransport.MySQLInspec
 			return fmt.Errorf("inspect node %q: %w", n.ID, err)
 		}
 		if len(in.ReplicaChannels) == 0 {
-			logger.Warn("verify: node has no replica channel (skipping replication check)", "node", n.ID)
-			continue
+			return fmt.Errorf("node %s has no replica channel after failover (expected to replicate from %s)", n.ID, plan.Candidate.ID)
 		}
 		ch := in.ReplicaChannels[0]
 		if !replicaPointsToCandidate(ch, candSpec) {

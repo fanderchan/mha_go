@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -185,15 +186,37 @@ func (n NodeSpec) Address() string {
 }
 
 type SQLTargetSpec struct {
-	User        string
-	PasswordRef string
-	TLSProfile  string
+	User                   string
+	PasswordRef            string
+	ReplicationUser        string
+	ReplicationPasswordRef string
+	TLSProfile             string
+}
+
+func (s SQLTargetSpec) ReplicationUserOrDefault() string {
+	if strings.TrimSpace(s.ReplicationUser) != "" {
+		return s.ReplicationUser
+	}
+	return s.User
+}
+
+func (s SQLTargetSpec) ReplicationPasswordRefOrDefault() string {
+	if strings.TrimSpace(s.ReplicationPasswordRef) != "" {
+		return s.ReplicationPasswordRef
+	}
+	return s.PasswordRef
 }
 
 type SSHTargetSpec struct {
-	User        string
-	Port        int
-	PasswordRef string
+	User                    string
+	Port                    int
+	PasswordRef             string
+	PrivateKeyRef           string
+	PrivateKeyPassphraseRef string
+	BinlogDir               string
+	BinlogIndex             string
+	BinlogPrefix            string
+	MySQLBinlogPath         string
 }
 
 type AgentTargetSpec struct {

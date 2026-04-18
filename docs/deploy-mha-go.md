@@ -60,7 +60,7 @@ Run on the **primary** (will be replicated to all replicas via GTID):
 CREATE USER IF NOT EXISTS 'mha'@'<subnet>%'
   IDENTIFIED BY '<password>';
 
-GRANT SELECT, RELOAD, SUPER,
+GRANT SELECT, RELOAD, PROCESS, SUPER,
       REPLICATION SLAVE, REPLICATION CLIENT
   ON *.* TO 'mha'@'<subnet>%';
 
@@ -71,6 +71,11 @@ dbbot defaults:
 - Username: `mha`
 - Password: `Dbbot_mha@8888`
 - Host range: `192.168.161.%` (adjust to your subnet)
+- Replication source account created by `master_slave.yml`: `repl` / `Dbbot_repl@8888` on `192.168.161.%`
+
+Keep the management account and replication account separate in `cluster.yaml`.
+`mha` is used to inspect and orchestrate nodes; `repl` is written into
+`SOURCE_USER` / `SOURCE_PASSWORD` when mha-go repoints replicas.
 
 Verify it replicated to the replicas:
 
@@ -123,6 +128,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 
   - id: db2
     host: 192.168.161.12
@@ -133,6 +140,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 
   - id: db3
     host: 192.168.161.13
@@ -143,6 +152,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 ```
 
 `password_ref` supports three forms:
@@ -160,10 +171,10 @@ Expected output:
 
 ```
 Cluster: <name>  mode=async-single-primary  primary=db1  nodes=3
-  - db1    role=primary health=alive   addr=192.168.161.11:3306   ro=false
-  - db2    role=replica health=alive   addr=192.168.161.12:3306   ro=true
+  - db1    role=primary health=alive   addr=192.168.161.11:3306   ro=false sro=false
+  - db2    role=replica health=alive   addr=192.168.161.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
-  - db3    role=replica health=alive   addr=192.168.161.13:3306   ro=true
+  - db3    role=replica health=alive   addr=192.168.161.13:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
 Assessment: OK
 ```
@@ -173,11 +184,11 @@ Assessment: OK
 Online switchover doesn't interrupt the workload and is appropriate for planned maintenance (host drain, upgrade, etc.):
 
 ```bash
-# Dry-run (default; no MySQL writes)
-mha switch --config /etc/mha/cluster.yaml --new-primary db2
+# Dry-run (no MySQL writes)
+mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run
 
 # Execute for real
-mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
+mha switch --config /etc/mha/cluster.yaml --new-primary db2
 ```
 
 ## Step 7: Failover plan (emergency rehearsal)
@@ -187,7 +198,7 @@ mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
 mha failover-plan --config /etc/mha/cluster.yaml
 
 # Execute (only after the primary is confirmed dead)
-mha failover-execute --config /etc/mha/cluster.yaml --dry-run=false
+mha failover-execute --config /etc/mha/cluster.yaml
 ```
 
 ## Long-running monitor mode

@@ -129,7 +129,7 @@ func TestBuildPlanIncludesSalvageActions(t *testing.T) {
 			},
 		},
 		Nodes: []domain.NodeSpec{
-			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},
+			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4", SSH: &domain.SSHTargetSpec{User: "mysql", PrivateKeyRef: "file:/tmp/id_rsa"}},
 			{ID: "db2", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 90},
 			{ID: "db3", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 100},
 		},
@@ -209,6 +209,139 @@ func TestBuildPlanIncludesSalvageActions(t *testing.T) {
 	}
 	if len(plan.Steps) == 0 {
 		t.Fatal("steps should not be empty")
+	}
+}
+
+func TestBuildPlanAddsSSHBinlogSalvageWhenOldPrimaryGTIDUnknown(t *testing.T) {
+	spec := domain.ClusterSpec{
+		Name: "app1",
+		Controller: domain.ControllerSpec{
+			ID:    "manager-1",
+			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
+		},
+		Topology: domain.TopologySpec{
+			Kind:         domain.TopologyAsyncSinglePrimary,
+			SingleWriter: true,
+		},
+		Replication: domain.ReplicationSpec{
+			Mode:     domain.ReplicationModeGTID,
+			SemiSync: domain.SemiSyncSpec{Policy: domain.SemiSyncPreferred},
+			Salvage:  domain.SalvageSpec{Policy: domain.SalvageIfPossible},
+		},
+		Nodes: []domain.NodeSpec{
+			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4", SSH: &domain.SSHTargetSpec{User: "mysql", PrivateKeyRef: "file:/tmp/id_rsa"}},
+			{ID: "db2", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 100},
+		},
+	}
+
+	view := &domain.ClusterView{
+		ClusterName: spec.Name,
+		PrimaryID:   "db1",
+		Nodes: []domain.NodeState{
+			{ID: "db1", Role: domain.NodeRolePrimary, Health: domain.NodeHealthDead},
+			{
+				ID:                "db2",
+				Role:              domain.NodeRoleReplica,
+				Health:            domain.NodeHealthAlive,
+				CandidatePriority: 100,
+				GTIDExecuted:      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1-10",
+				ReadOnly:          true,
+				SuperReadOnly:     true,
+				Replica: &domain.ReplicaState{
+					SourceID:            "db1",
+					AutoPosition:        true,
+					IOThreadRunning:     false,
+					SQLThreadRunning:    true,
+					SecondsBehindSource: 0,
+				},
+			},
+		},
+	}
+
+	controller := NewController(
+		fakeDiscoverer{view: view},
+		topology.NewDefaultCandidateSelector(),
+		nil,
+		state.NewMemoryStore(),
+		obs.NewLogger("error"),
+	)
+	plan, err := controller.BuildPlan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	if !plan.ExecutionPermitted {
+		t.Fatalf("execution should be permitted with SSH binlog salvage configured: %+v", plan.BlockingReasons)
+	}
+	if len(plan.SalvageActions) != 1 {
+		t.Fatalf("salvage actions = %+v, want one SSH binlog action", plan.SalvageActions)
+	}
+	if plan.SalvageActions[0].Kind != "recover-from-old-primary-binlog" {
+		t.Fatalf("salvage action kind = %s, want recover-from-old-primary-binlog", plan.SalvageActions[0].Kind)
+	}
+}
+
+func TestBuildPlanBlocksUnknownOldPrimaryGTIDWithoutSSH(t *testing.T) {
+	spec := domain.ClusterSpec{
+		Name: "app1",
+		Controller: domain.ControllerSpec{
+			ID:    "manager-1",
+			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
+		},
+		Topology: domain.TopologySpec{
+			Kind:         domain.TopologyAsyncSinglePrimary,
+			SingleWriter: true,
+		},
+		Replication: domain.ReplicationSpec{
+			Mode:     domain.ReplicationModeGTID,
+			SemiSync: domain.SemiSyncSpec{Policy: domain.SemiSyncPreferred},
+			Salvage:  domain.SalvageSpec{Policy: domain.SalvageIfPossible},
+		},
+		Nodes: []domain.NodeSpec{
+			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},
+			{ID: "db2", ExpectedRole: domain.NodeRoleReplica, VersionSeries: "8.4", CandidatePriority: 100},
+		},
+	}
+
+	view := &domain.ClusterView{
+		ClusterName: spec.Name,
+		PrimaryID:   "db1",
+		Nodes: []domain.NodeState{
+			{ID: "db1", Role: domain.NodeRolePrimary, Health: domain.NodeHealthDead},
+			{
+				ID:                "db2",
+				Role:              domain.NodeRoleReplica,
+				Health:            domain.NodeHealthAlive,
+				CandidatePriority: 100,
+				GTIDExecuted:      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1-10",
+				ReadOnly:          true,
+				SuperReadOnly:     true,
+				Replica: &domain.ReplicaState{
+					SourceID:            "db1",
+					AutoPosition:        true,
+					IOThreadRunning:     false,
+					SQLThreadRunning:    true,
+					SecondsBehindSource: 0,
+				},
+			},
+		},
+	}
+
+	controller := NewController(
+		fakeDiscoverer{view: view},
+		topology.NewDefaultCandidateSelector(),
+		nil,
+		state.NewMemoryStore(),
+		obs.NewLogger("error"),
+	)
+	plan, err := controller.BuildPlan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	if plan.ExecutionPermitted {
+		t.Fatal("execution should be blocked without SSH binlog salvage")
+	}
+	if len(plan.BlockingReasons) == 0 {
+		t.Fatal("expected blocking reason for missing SSH binlog salvage")
 	}
 }
 

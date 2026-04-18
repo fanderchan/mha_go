@@ -29,6 +29,10 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	if os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help" {
+		usage()
+		return
+	}
 
 	ctx := context.Background()
 
@@ -54,6 +58,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
+  mha --help
   mha check-repl       --config <file> [--discoverer sql|static] [--log-format text|json]
   mha manager          --config <file> [--discoverer sql|static] [--dry-run] [--log-format text|json]
   mha switch           --config <file> [--new-primary <node-id>] [--discoverer sql|static] [--dry-run] [--log-format text|json]
@@ -160,7 +165,7 @@ func runSwitch(ctx context.Context, args []string) int {
 	logLevel := fs.String("log-level", "info", "log level")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	newPrimary := fs.String("new-primary", "", "node ID to promote (default: auto-select best candidate)")
-	dryRun := fs.Bool("dry-run", true, "plan and log switchover steps without executing MySQL changes")
+	dryRun := fs.Bool("dry-run", false, "plan and log switchover steps without executing MySQL changes")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -284,7 +289,7 @@ func runFailoverExecute(ctx context.Context, args []string) int {
 	logLevel := fs.String("log-level", "info", "log level")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	candidate := fs.String("candidate", "", "node ID to use as failover candidate (default: auto-select)")
-	dryRun := fs.Bool("dry-run", true, "use dry-run action runner (no MySQL writes)")
+	dryRun := fs.Bool("dry-run", false, "use dry-run action runner (no MySQL writes)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

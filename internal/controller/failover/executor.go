@@ -61,7 +61,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 		Plan:        *plan,
 	}
 
-	_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+	_ = e.dispatch(ctx, hooks.Event{
 		Name:    "failover.start",
 		Cluster: spec.Name,
 		RunKind: domain.RunKindFailover,
@@ -158,7 +158,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 			})
 			_ = e.store.UpdateRun(ctx, run.ID, domain.RunStatusFailed, stepErr.Error())
 			execution.FinishedAt = time.Now()
-			_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+			_ = e.dispatch(ctx, hooks.Event{
 				Name:    "failover.abort",
 				Cluster: spec.Name,
 				RunKind: domain.RunKindFailover,
@@ -185,7 +185,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 		// Per-step hook events.
 		switch step.Name {
 		case "fence-old-primary":
-			_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+			_ = e.dispatch(ctx, hooks.Event{
 				Name:    "failover.fence",
 				Cluster: spec.Name,
 				RunKind: domain.RunKindFailover,
@@ -193,7 +193,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 				Data:    map[string]string{"fenced_node": plan.OldPrimary.ID},
 			})
 		case "promote-candidate":
-			_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+			_ = e.dispatch(ctx, hooks.Event{
 				Name:    "failover.promote",
 				Cluster: spec.Name,
 				RunKind: domain.RunKindFailover,
@@ -201,7 +201,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 				Data:    map[string]string{"new_primary": plan.Candidate.ID},
 			})
 		case "switch-writer-endpoint":
-			_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+			_ = e.dispatch(ctx, hooks.Event{
 				Name:    "failover.writer_switched",
 				Cluster: spec.Name,
 				RunKind: domain.RunKindFailover,
@@ -221,7 +221,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 	if execution.Blocked {
 		finalStatus = domain.RunStatusAborted
 		finalSummary = fmt.Sprintf("failover execution blocked at %s", execution.FailedStep)
-		_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+		_ = e.dispatch(ctx, hooks.Event{
 			Name:    "failover.abort",
 			Cluster: spec.Name,
 			RunKind: domain.RunKindFailover,
@@ -235,7 +235,7 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 		finalStatus = domain.RunStatusFailed
 		finalSummary = fmt.Sprintf("failover execution failed at %s", execution.FailedStep)
 	} else {
-		_ = e.dispatcher.Dispatch(ctx, hooks.Event{
+		_ = e.dispatch(ctx, hooks.Event{
 			Name:    "failover.complete",
 			Cluster: spec.Name,
 			RunKind: domain.RunKindFailover,
@@ -248,6 +248,14 @@ func (e *Executor) ExecutePlan(ctx context.Context, spec domain.ClusterSpec, pla
 	}
 	_ = e.store.UpdateRun(ctx, run.ID, finalStatus, finalSummary)
 	return execution, nil
+}
+
+func (e *Executor) dispatch(ctx context.Context, event hooks.Event) error {
+	if err := e.dispatcher.Dispatch(ctx, event); err != nil {
+		e.logger.Warn("hook dispatch failed", "event", event.Name, "error", err)
+		return err
+	}
+	return nil
 }
 
 func (e *Executor) executeStep(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, step domain.FailoverStep, salvageIndex *int) error {

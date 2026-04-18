@@ -23,7 +23,7 @@
 | 写入口模型 | 通常由 hook 脚本承担，例如 VIP failover 脚本 | 独立 `writer_endpoint` 步骤，支持 precheck 和 verify 命令 |
 | Hook 角色 | 运维脚本常承载关键切换行为 | 告警、审计和兼容回调；不作为 VIP/proxy 主切换入口 |
 | 隔离模型 | 主要依赖外部脚本和运维约定 | 显式 fencing steps，支持 required/optional 语义 |
-| 安全默认值 | 命令调用后通常直接执行 | 变更类 failover/switchover 默认 dry-run |
+| 执行模型 | 命令调用后通常直接执行 | `switch` 和 `failover-execute` 默认执行；需要预演时加 `--dry-run` |
 | 持久化策略 | 不内置状态数据库 | 不引入 SQLite 或内嵌 DB；持久历史归日志系统 |
 | 控制器 HA 模型 | 常规单活 manager | 默认单活 manager，贴近 Perl MHA 运维模型 |
 
@@ -46,10 +46,10 @@
 | 故障转移 | 自动主库故障检测 | ✓ | ✓ |
 | 故障转移 | 候选优先级 / no-master 控制 | ✓ | ✓ |
 | 故障转移 | 执行前生成 typed 有序计划 | - | ✓ |
-| 故障转移 | 写操作默认 dry-run | - | ✓ |
+| 故障转移 | 写操作支持显式 dry-run | - | ✓ |
 | 恢复 | 通过 SSH node 工具做 relay-log/binlog 恢复 | ✓ | - |
 | 恢复 | 从 SQL 可访问 donor 做 GTID 追平 | - | ✓ |
-| 恢复 | 旧主 SQL 不可达时通过 SSH/node 工具抽取 binlog | ✓ | 计划中 |
+| 恢复 | 旧主 SQL 不可达时通过 SSH/node 工具抽取 binlog | ✓ | 部分支持 |
 | 在线切换 | 在线主库切换 | ✓ | ✓ |
 | 写入口 | 外部命令切换 VIP/proxy | ✓ | ✓ |
 | 写入口 | promote 前预检写入口切换能力 | - | ✓ |
@@ -101,6 +101,7 @@ CREATE USER IF NOT EXISTS 'mha'@'<你的子网>%'
 
 -- 健康检查 + 故障转移所需的最小权限
 GRANT RELOAD,
+      PROCESS,
       REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
@@ -176,7 +177,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_DB_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
 
   - id: db2
     host: 10.0.0.12
@@ -186,7 +189,9 @@ nodes:
     candidate_priority: 100
     sql:
       user: mha
-      password_ref: env:MHA_DB_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
 
   - id: db3
     host: 10.0.0.13
@@ -196,13 +201,16 @@ nodes:
     candidate_priority: 90
     sql:
       user: mha
-      password_ref: env:MHA_DB_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
 ```
 
 通过环境变量设置密码：
 
 ```bash
-export MHA_DB_PASSWORD='你的强密码'
+export MHA_ADMIN_PASSWORD='你的管理账号强密码'
+export MHA_REPL_PASSWORD='你的复制账号强密码'
 ```
 
 ### 5. 验证复制健康状态
@@ -215,10 +223,10 @@ export MHA_DB_PASSWORD='你的强密码'
 
 ```
 Cluster: my-cluster  mode=async-single-primary  primary=db1  nodes=3
-  - db1    role=primary health=alive   addr=10.0.0.11:3306   ro=false
-  - db2    role=replica health=alive   addr=10.0.0.12:3306   ro=true
+  - db1    role=primary health=alive   addr=10.0.0.11:3306   ro=false sro=false
+  - db2    role=replica health=alive   addr=10.0.0.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
-  - db3    role=replica health=alive   addr=10.0.0.13:3306   ro=true
+  - db3    role=replica health=alive   addr=10.0.0.13:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
 Assessment: OK
 ```
@@ -226,13 +234,13 @@ Assessment: OK
 ### 6. 开始使用
 
 ```bash
-# 在线切换（先 dry-run，再真实执行）
+# 在线切换（先预演，再真实执行）
+./mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run
 ./mha switch --config /etc/mha/cluster.yaml --new-primary db2
-./mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
 
 # 故障转移计划和执行
 ./mha failover-plan --config /etc/mha/cluster.yaml
-./mha failover-execute --config /etc/mha/cluster.yaml --dry-run=false
+./mha failover-execute --config /etc/mha/cluster.yaml
 
 # 启动 HA 监控守护进程
 ./mha manager --config /etc/mha/cluster.yaml
@@ -248,20 +256,22 @@ Assessment: OK
 | `failover-plan` | 构建并展示故障转移计划，不执行 |
 | `failover-execute` | 构建并执行故障转移计划 |
 
-通用参数：
+业务子命令（`check-repl`、`manager`、`switch`、`failover-plan`、`failover-execute`）支持：
 
 - `--config <file>` — 集群配置文件（必需）
+- `--discoverer sql|static`（默认 `sql`）
 - `--log-level debug|info|warn|error`（默认 `info`）
 - `--log-format text|json`（默认 `text`）
-- `--dry-run` — `switch` 和 `failover-execute` 默认为 `true`
+
+`manager`、`switch`、`failover-execute` 还支持 `--dry-run`，用于预演/不写入模式。`switch` 和 `failover-execute` 省略 `--dry-run` 时默认真实执行。
 
 ## 凭据引用
 
-`sql.password_ref` 字段支持三种格式：
+`sql.password_ref` 和 `sql.replication_password_ref` 字段支持三种格式：
 
 | 格式 | 示例 | 说明 |
 |------|------|------|
-| `env:变量名` | `env:MHA_DB_PASSWORD` | 从环境变量读取（推荐） |
+| `env:变量名` | `env:MHA_ADMIN_PASSWORD` | 从环境变量读取（推荐） |
 | `file:路径` | `file:/etc/mha/db.secret` | 从文件读取；自动去除尾部换行 |
 | `plain:值` | `plain:s3cr3t` | 明文 — **不建议用于生产环境** |
 
@@ -280,7 +290,8 @@ Type=simple
 ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml --log-format json
 Restart=on-failure
 RestartSec=5s
-Environment=MHA_DB_PASSWORD=your-password-here
+Environment=MHA_ADMIN_PASSWORD=your-admin-password
+Environment=MHA_REPL_PASSWORD=your-replication-password
 StandardOutput=journal
 StandardError=journal
 

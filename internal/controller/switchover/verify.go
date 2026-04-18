@@ -10,11 +10,15 @@ import (
 	sqltransport "mha-go/internal/transport/sql"
 )
 
+type nodeInspector interface {
+	Inspect(ctx context.Context, node domain.NodeSpec) (*sqltransport.Inspection, error)
+}
+
 // VerifyPostSwitchover confirms that:
 //  1. The new primary (candidate) is read-write and has no replication channels.
 //  2. The original primary is now read-only and replicates from the new primary.
 //  3. All other replicas replicate from the new primary with auto-position.
-func VerifyPostSwitchover(ctx context.Context, inspector *sqltransport.MySQLInspector, spec domain.ClusterSpec, plan *domain.SwitchoverPlan, logger *obs.Logger) error {
+func VerifyPostSwitchover(ctx context.Context, inspector nodeInspector, spec domain.ClusterSpec, plan *domain.SwitchoverPlan, logger *obs.Logger) error {
 	candSpec, ok := nodeSpecByID(spec, plan.Candidate.ID)
 	if !ok {
 		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
@@ -67,8 +71,7 @@ func VerifyPostSwitchover(ctx context.Context, inspector *sqltransport.MySQLInsp
 			return fmt.Errorf("inspect replica %q: %w", n.ID, err)
 		}
 		if len(in.ReplicaChannels) == 0 {
-			logger.Warn("verify: replica has no channel after switchover", "replica", n.ID)
-			continue
+			return fmt.Errorf("replica %s has no channel after switchover (expected to replicate from %s)", n.ID, plan.Candidate.ID)
 		}
 		ch := in.ReplicaChannels[0]
 		if !replicaPointsToNode(ch, candSpec) {

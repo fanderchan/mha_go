@@ -98,7 +98,7 @@ cmd/mha
 └─ version        version info
 
 internal/
-├─ config         config model; compat with legacy MHA config
+├─ config         config model and validation
 ├─ capability     version capability detection
 ├─ domain         domain objects
 ├─ topology       topology discovery and candidate selection
@@ -120,7 +120,6 @@ internal/
 Responsibilities:
 
 - Read YAML/TOML/JSON primary config
-- Import legacy MHA `cnf` for compatibility
 - Validate required fields
 - Validate mutually exclusive fields
 - Normalize defaults
@@ -128,8 +127,8 @@ Responsibilities:
 Core requirements:
 
 - Stop using "block name + Perl-style parameters" as the internal model
-- Legacy formats are input adapters only; they do not enter the core domain
 - `password_ref` uses a unified reference form. In v1 we support `env:NAME`, `file:/path`, and `plain:value`
+- Administrative SQL credentials (`sql.user` / `sql.password_ref`) are separate from replication-source credentials (`sql.replication_user` / `sql.replication_password_ref`); the latter feed `SOURCE_USER` / `SOURCE_PASSWORD`
 - Offline demos and unit tests may use `static discoverer`; real topology checks go through `sql discoverer`
 
 ### 6.2 `capability`
@@ -187,7 +186,7 @@ Current implementation constraints:
 - `failover-plan` also emits an execution gate: whether the primary is confirmed dead, the blocking reasons, and the recommended salvage actions
 - `failover-plan` produces a typed step outline covering `confirm`, `fence`, `salvage`, `promote`, `repoint`, `switch-writer-endpoint`, and `verify`
 - `failover-execute --dry-run` consumes the typed step outline and halts at the first blocking step
-- `failover-execute --dry-run=false` uses `MySQLActionRunner`: when `writer_endpoint.kind` is `vip`/`proxy` it runs the endpoint precheck first (confirming the switch command exists and running the optional `precheck_command`); it fences the old primary per `fencing.steps` with a default required `read_only` (SQL `super_read_only`/`read_only` when reachable, skipped when the old primary is already marked dead and unreachable); salvage steps point the candidate at a donor followed by `WAIT_FOR_EXECUTED_GTID_SET`; the candidate is promoted via `STOP REPLICA` / `RESET REPLICA ALL` / turning off read-only; only replicas reachable at planning time are repointed, dead replicas are skipped and left for later rejoin; the writer endpoint switch runs the external script via `writer_endpoint.command` or the `MHA_WRITER_ENDPOINT_COMMAND` env var; the optional `verify_command` validates the endpoint; `verify-cluster` uses SQL to confirm the new primary is writable and reachable replicas point at it
+- `failover-execute` without `--dry-run` uses `MySQLActionRunner`: when `writer_endpoint.kind` is `vip`/`proxy` it runs the endpoint precheck first (confirming the switch command exists and running the optional `precheck_command`); it fences the old primary per `fencing.steps` with a default required `read_only` (SQL `super_read_only`/`read_only` when reachable, skipped when the old primary is already marked dead and unreachable); SQL-accessible salvage steps point the candidate at a donor followed by `WAIT_FOR_EXECUTED_GTID_SET`; when the old primary is SQL-dead but SSH-reachable, binlog salvage streams old-primary local binlogs through `mysqlbinlog` and applies them to the candidate with GTID include/exclude filters; the candidate is promoted via `STOP REPLICA` / `RESET REPLICA ALL` / turning off read-only; only replicas reachable at planning time are repointed, dead replicas are skipped and left for later rejoin; the writer endpoint switch runs the external script via `writer_endpoint.command` or the `MHA_WRITER_ENDPOINT_COMMAND` env var; the optional `verify_command` validates the endpoint; `verify-cluster` uses SQL to confirm the new primary is writable and reachable replicas point at it
 
 ### 6.5 `monitor`
 
@@ -279,6 +278,7 @@ State machine:
 ```text
 Precheck
 -> PrecheckWriterEndpoint
+-> LockCandidate
 -> LockOldPrimary
 -> WaitCandidateCatchUp
 -> PromoteCandidate
@@ -291,6 +291,12 @@ Precheck
 ```
 
 Note: there is no separate `FreezeWrites` step. `LockOldPrimary` (setting `super_read_only`) already blocks new writes at the MySQL layer and is equivalent in effect. Proxy-layer traffic cutover is handled at the end by `SwitchWriterEndpoint` via an external script; the two responsibilities don't overlap, so no intermediate step is needed.
+
+Current implementation details:
+
+- Before execution, switchover validates GTID divergence when the candidate is currently writable. A writable candidate is allowed only when its GTID set is still contained by the original primary's GTID set.
+- During execution, `LockCandidate` sets the candidate read-only before locking the old primary, closing the window where local writes on the candidate could create new errant GTIDs.
+- After `LockOldPrimary`, `WaitCandidateCatchUp` does not trust a single immediate `gtid_executed` snapshot. It waits for active InnoDB write transactions on the old primary to drain, requires the old-primary GTID set to remain stable across consecutive samples, and only then waits for that final GTID set on the candidate.
 
 ### 6.8 `replication`
 
@@ -388,7 +394,7 @@ For workloads that prioritize availability.
 Priority order:
 
 1. Old primary is SQL-reachable: query GTID, binlog position, and read-only state directly
-2. Old primary not SQL-reachable but reachable via agent/SSH: read local binlog and extract the missing GTID transactions
+2. Old primary not SQL-reachable but reachable via agent/SSH: read local binlog and extract the missing GTID transactions. The current SSH implementation runs remote `mysqlbinlog` against configured local binlog files and applies the stream to the candidate with the local `mysql` client.
 3. Old primary fully unreachable: follow the configured policy to abort or continue
 
 Abstract interface:
@@ -450,7 +456,6 @@ v1 CLI:
 Considered later but not current targets:
 
 - `mha manager run-once`
-- `mha compat import-mha-cnf`
 - `mha admin status`
 
 Explicitly not doing:
@@ -590,7 +595,7 @@ Where:
 
 - Salvage logic after semi-sync downgrade
 - Typed fencing coordinator
-- Agent/SSH binlog salvage
+- Agent-based salvage hardening and SSH binlog salvage integration tests
 - Dual manager / distributed lease evaluation (roadmap item, not a v1 target)
 
 ### Phase 6

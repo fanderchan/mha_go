@@ -36,12 +36,12 @@ Verify:
 SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency');
 ```
 
-### 1.2 Replication account
+### 1.2 SQL accounts
 
-mha-go uses a single SQL account to connect to every node. The same account is used for health checks, topology discovery, and for wiring replication after a failover.
+mha-go uses an administrative SQL account for health checks, topology discovery, fencing, promotion, and replica rewiring. Production clusters should use a separate replication account for `CHANGE REPLICATION SOURCE TO`.
 
 ```sql
--- Create the account (run on every node, or replicate from primary)
+-- Administrative account (run on every node, or replicate from primary)
 CREATE USER 'mha'@'%' IDENTIFIED BY 'strong-password';
 
 -- Privileges needed for health checks and topology discovery
@@ -50,20 +50,25 @@ GRANT REPLICATION CLIENT ON *.* TO 'mha'@'%';
 -- Privilege needed for RESET REPLICA ALL
 GRANT RELOAD ON *.* TO 'mha'@'%';
 
+-- Privilege needed to wait for active write transactions to drain during switchover
+GRANT PROCESS ON *.* TO 'mha'@'%';
+
 -- Privileges needed for fencing and promotion
 GRANT SYSTEM_VARIABLES_ADMIN, SESSION_VARIABLES_ADMIN ON *.* TO 'mha'@'%';
 
 -- Privileges needed for STOP/START/RESET/CHANGE REPLICA
 GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'mha'@'%';
 
--- Privilege needed to replicate from this account
-GRANT REPLICATION SLAVE ON *.* TO 'mha'@'%';
+-- Separate replication account used by SOURCE_USER/SOURCE_PASSWORD
+CREATE USER 'repl'@'%' IDENTIFIED BY 'strong-repl-password';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
 
 FLUSH PRIVILEGES;
 ```
 
 > **Minimum viable alternative (simpler but broader):**
-> `GRANT SUPER, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'mha'@'%';`
+> `GRANT SUPER, PROCESS, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'mha'@'%';`
+> If `sql.replication_user` / `sql.replication_password_ref` are omitted, mha-go falls back to `sql.user` / `sql.password_ref` for compatibility. Do not rely on that in production.
 
 ### 1.3 Semi-sync (optional)
 
@@ -93,7 +98,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_DB_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
 
   - id: db2
     host: 10.0.0.12
@@ -102,7 +109,9 @@ nodes:
     expected_role: replica
     sql:
       user: mha
-      password_ref: env:MHA_DB_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
 ```
 
 ### Full field reference
@@ -204,17 +213,28 @@ fencing:
 | `labels` | | Key/value map (informational). |
 | `sql.user` | | MySQL username. |
 | `sql.password_ref` | | Credential reference (see [§3](#3-credential-reference-formats)). |
+| `sql.replication_user` | `sql.user` | Account used in `SOURCE_USER` when this node becomes a replication source. Must be set with `sql.replication_password_ref`. |
+| `sql.replication_password_ref` | `sql.password_ref` | Credential reference used in `SOURCE_PASSWORD` when this node becomes a replication source. Must be set with `sql.replication_user`. |
 | `sql.tls_profile` | `disabled` | `disabled`, `default`, `required`, `preferred`, `skip-verify`. |
+| `ssh.user` | | SSH user for old-primary binlog salvage. |
+| `ssh.port` | `22` | SSH port. |
+| `ssh.password_ref` | | Optional SSH password credential reference. |
+| `ssh.private_key_ref` | | Optional private key credential reference; `file:/path` is recommended. |
+| `ssh.private_key_passphrase_ref` | | Optional passphrase credential reference for encrypted private keys. |
+| `ssh.binlog_dir` | `/var/lib/mysql` | Directory containing local binary logs on the MySQL host. |
+| `ssh.binlog_index` | | Optional explicit binlog index path. If omitted, mha-go tries `<binlog_dir>/<binlog_prefix>.index`, then file discovery. |
+| `ssh.binlog_prefix` | `binlog` | Binlog file prefix used for fallback discovery, for example `mysql-bin`. |
+| `ssh.mysqlbinlog_path` | `mysqlbinlog` | Remote `mysqlbinlog` command path. |
 
 ---
 
 ## 3. Credential reference formats
 
-The `sql.password_ref` field supports three schemes:
+The `sql.password_ref`, `sql.replication_password_ref`, `ssh.password_ref`, `ssh.private_key_ref`, and `ssh.private_key_passphrase_ref` fields support three schemes:
 
 | Scheme | Example | Notes |
 |--------|---------|-------|
-| `env:VARNAME` | `env:MHA_DB_PASSWORD` | Read from environment variable at runtime. |
+| `env:VARNAME` | `env:MHA_ADMIN_PASSWORD` | Read from environment variable at runtime. |
 | `file:/absolute/path` | `file:/etc/mha/db.secret` | Read from file; trailing `\r\n` stripped. |
 | `plain:value` | `plain:s3cr3t` | Literal — not recommended for production. |
 
@@ -240,20 +260,20 @@ Long-running HA monitor. Probes the primary on every `monitor.interval`. Trigger
 mha manager --config cluster.yaml
 ```
 
-- Acquires a local lease on startup; will refuse to run if another manager instance holds it.
+- Uses the configured lease manager. The default `local-memory` lease only protects concurrent operations inside the current process; it is not a cross-process or cross-host manager lock.
 - After a successful failover the process exits (exit 0). The cluster must be re-configured and the manager restarted before a new monitor session begins.
 - `--dry-run=true` runs the full monitor loop but executes failover steps as dry-run only (no MySQL writes).
 
 ### `mha switch`
 
-Online (graceful) switchover. Defaults to `--dry-run=true`; pass `--dry-run=false` to execute for real.
+Online (graceful) switchover. It executes by default; add `--dry-run` to preview the plan and steps without MySQL writes.
 
 ```bash
 # Dry-run first — verify the plan
-mha switch --config cluster.yaml --new-primary db2
+mha switch --config cluster.yaml --new-primary db2 --dry-run
 
 # Execute for real
-mha switch --config cluster.yaml --new-primary db2 --dry-run=false
+mha switch --config cluster.yaml --new-primary db2
 ```
 
 - `--new-primary <id>`: target node for promotion. If omitted, the best available replica is chosen automatically.
@@ -261,14 +281,15 @@ mha switch --config cluster.yaml --new-primary db2 --dry-run=false
 
 Steps executed:
 1. `precheck-writer-endpoint` — verify the endpoint switch can run (only when `writer_endpoint.kind` is `vip` or `proxy`).
-2. `lock-old-primary` — set `super_read_only=ON` on the current primary.
-3. `wait-candidate-catchup` — wait until the candidate has applied all GTIDs from the current primary.
-4. `promote-candidate` — stop replication on the candidate, set it writable.
-5. `repoint-replicas` — redirect other replicas to the new primary.
-6. `repoint-old-primary` — make the old primary a replica of the new primary.
-7. `switch-writer-endpoint` — execute the endpoint script (if configured).
-8. `verify-writer-endpoint` — run the endpoint verify script (if configured).
-9. `verify` — confirm the new topology is correct.
+2. `lock-candidate` — set the candidate read-only before old-primary locking; if it was writable during planning, first validate it has no errant GTIDs absent from the old primary.
+3. `lock-old-primary` — set `super_read_only=ON` on the current primary.
+4. `wait-candidate-catchup` — wait until the candidate has applied all GTIDs from the current primary.
+5. `promote-candidate` — stop replication on the candidate, set it writable.
+6. `repoint-replicas` — redirect other replicas to the new primary.
+7. `repoint-old-primary` — make the old primary a replica of the new primary.
+8. `switch-writer-endpoint` — execute the endpoint script (if configured).
+9. `verify-writer-endpoint` — run the endpoint verify script (if configured).
+10. `verify` — confirm the new topology is correct.
 
 ### `mha failover-plan`
 
@@ -287,14 +308,14 @@ The plan output shows:
 
 ### `mha failover-execute`
 
-Builds and executes a failover plan. Defaults to `--dry-run=true`.
+Builds and executes a failover plan. It executes by default; add `--dry-run` to audit the steps without MySQL writes.
 
 ```bash
-# Safe audit — no MySQL writes
-mha failover-execute --config cluster.yaml
+# Safe audit - no MySQL writes
+mha failover-execute --config cluster.yaml --dry-run
 
 # Execute for real (only after the primary is confirmed dead)
-mha failover-execute --config cluster.yaml --dry-run=false
+mha failover-execute --config cluster.yaml
 ```
 
 - If the plan's execution is blocked (e.g. primary is still alive), steps are recorded as `blocked`/`skipped` and the exit code is 1.
@@ -311,10 +332,10 @@ mha failover-execute --config cluster.yaml --dry-run=false
 ./mha check-repl --config cluster.yaml
 
 # 2. Dry-run the switchover to check the plan
-./mha switch --config cluster.yaml --new-primary db2
+./mha switch --config cluster.yaml --new-primary db2 --dry-run
 
 # 3. Confirm the plan looks correct, then execute
-./mha switch --config cluster.yaml --new-primary db2 --dry-run=false
+./mha switch --config cluster.yaml --new-primary db2
 
 # 4. Verify again
 ./mha check-repl --config cluster.yaml
@@ -327,10 +348,10 @@ mha failover-execute --config cluster.yaml --dry-run=false
 ./mha failover-plan --config cluster.yaml
 
 # 2. Audit dry-run execution
-./mha failover-execute --config cluster.yaml
+./mha failover-execute --config cluster.yaml --dry-run
 
 # 3. Execute for real
-./mha failover-execute --config cluster.yaml --dry-run=false
+./mha failover-execute --config cluster.yaml
 
 # 4. Update cluster.yaml to reflect the new primary, then restart manager
 ```
@@ -375,7 +396,7 @@ Hooks are for notification, audit, and compatibility callbacks. VIP/proxy moveme
 | `failover.promote` | Candidate promoted to primary | `MHA_NEW_PRIMARY` |
 | `failover.writer_switched` | Writer endpoint moved | `MHA_NEW_PRIMARY`, `MHA_OLD_PRIMARY` |
 | `failover.complete` | Failover succeeded | `MHA_NEW_PRIMARY`, `MHA_OLD_PRIMARY` |
-| `failover.abort` | Failover blocked or failed | `MHA_FAILED_STEP`, `MHA_ERROR` |
+| `failover.abort` | Failover blocked or failed | `MHA_FAILED_STEP`, plus `MHA_ERROR` on failure or `MHA_REASON` when blocked |
 | `switchover.start` | Switchover execution begins | `MHA_ORIGINAL_PRIMARY`, `MHA_CANDIDATE` |
 | `switchover.complete` | Switchover succeeded | `MHA_NEW_PRIMARY`, `MHA_ORIGINAL_PRIMARY` |
 | `switchover.abort` | Switchover failed | `MHA_FAILED_STEP`, `MHA_ERROR` |
@@ -490,7 +511,17 @@ When a failover happens, the candidate may be missing transactions that were com
 | Policy | Behaviour |
 |--------|-----------|
 | `strict` | Block at plan time if any missing transactions are detected. The operator must resolve them manually before executing. |
-| `salvage-if-possible` (default) | Attempt to catch up the candidate by pointing it at the old primary (or another donor) via GTID. If this fails, abort the failover. |
+| `salvage-if-possible` (default) | Attempt to catch up the candidate by pointing it at the old primary (or another donor) via GTID. If the old primary is SQL-dead but SSH-reachable, dump local binlogs over SSH and apply the missing GTIDs. If this fails, abort the failover. |
 | `availability-first` | Same as `salvage-if-possible`, but a catch-up failure is recorded as a warning and the failover continues. Prioritises availability over zero data loss. |
 
-The catch-up uses `WAIT_FOR_EXECUTED_GTID_SET()` with the timeout configured in `replication.salvage.timeout` (default `30s`).
+SQL donor catch-up uses `WAIT_FOR_EXECUTED_GTID_SET()` with the timeout configured in `replication.salvage.timeout` (default `30s`).
+
+SSH binlog salvage requires:
+
+- `ssh` configured on the old primary node.
+- SSH host-key checking uses `MHA_SSH_KNOWN_HOSTS` or `~/.ssh/known_hosts` when available. Without either, the current SSH client falls back to accepting host keys without verification; configure known hosts in production.
+- `mysqlbinlog` installed on the old primary host.
+- The local `mysql` client installed on the manager host. Override its path with `MHA_MYSQL_CLIENT_PATH` if needed.
+- A correct `ssh.binlog_dir` / `ssh.binlog_index` / `ssh.binlog_prefix` for the old primary's local binlogs.
+
+When the old primary's GTID set is known, mha-go runs `mysqlbinlog --include-gtids=<missing>`. When the old primary is SQL-dead and its GTID set is unknown, mha-go runs `mysqlbinlog --exclude-gtids=<candidate_gtid_executed>` so already-applied transactions are skipped.

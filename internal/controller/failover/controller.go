@@ -93,6 +93,7 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 	}
 
 	recovery := replication.BuildRecoverySummary(view, *oldPrimary, *candidate, spec.Replication.Salvage.Policy)
+	salvageActions := addOldPrimaryBinlogSalvageAction(spec, *oldPrimary, *candidate, recovery.SalvageActions)
 	primaryFailureConfirmed, primaryFailureReason := confirmPrimaryFailure(*oldPrimary)
 	promoteReadinessReasons := evaluatePromoteReadiness(spec, *oldPrimary, *candidate, recovery)
 	blockingReasons := buildBlockingReasons(spec, *oldPrimary, *candidate, assessment, recovery, primaryFailureConfirmed, promoteReadinessReasons)
@@ -114,11 +115,11 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 		CandidateFreshnessScore:      recovery.CandidateFreshnessScore,
 		CandidateMostAdvanced:        recovery.CandidateMostAdvanced,
 		SalvagePolicy:                spec.Replication.Salvage.Policy,
-		ShouldAttemptSalvage:         shouldAttemptSalvage(spec, recovery),
+		ShouldAttemptSalvage:         len(salvageActions) > 0,
 		MissingFromPrimaryKnown:      recovery.MissingFromPrimaryKnown,
 		MissingFromPrimaryGTIDSet:    recovery.MissingFromPrimarySet,
 		RecoveryGaps:                 recovery.RecoveryGaps,
-		SalvageActions:               recovery.SalvageActions,
+		SalvageActions:               salvageActions,
 		SuggestedDonorIDs:            recovery.SuggestedDonorIDs,
 		RequiresFencing:              true,
 		RequiresWriterEndpointSwitch: writerEndpointEnabled(spec.WriterEndpoint.Kind),
@@ -146,14 +147,33 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 	return plan, nil
 }
 
-func shouldAttemptSalvage(_ domain.ClusterSpec, recovery replication.RecoverySummary) bool {
-	if recovery.MissingFromPrimaryKnown && recovery.MissingFromPrimarySet != "" {
-		return true
+func addOldPrimaryBinlogSalvageAction(spec domain.ClusterSpec, oldPrimary, candidate domain.NodeState, actions []domain.SalvageAction) []domain.SalvageAction {
+	if strings.TrimSpace(oldPrimary.GTIDExecuted) != "" {
+		return actions
 	}
-	if len(recovery.RecoveryGaps) > 0 {
-		return true
+	if oldPrimary.Health != domain.NodeHealthDead {
+		return actions
 	}
-	return false
+	if strings.TrimSpace(candidate.GTIDExecuted) == "" {
+		return actions
+	}
+	if !nodeHasSSHBinlogSalvage(spec, oldPrimary.ID) {
+		return actions
+	}
+	for _, action := range actions {
+		if action.DonorNodeID == oldPrimary.ID && action.TargetNodeID == candidate.ID {
+			return actions
+		}
+	}
+	required := spec.Replication.Salvage.Policy != domain.SalvageAvailabilityFirst
+	action := domain.SalvageAction{
+		Kind:         "recover-from-old-primary-binlog",
+		DonorNodeID:  oldPrimary.ID,
+		TargetNodeID: candidate.ID,
+		Required:     required,
+		Reason:       "old primary GTID is unavailable; dump local binlogs over SSH and exclude candidate GTIDs",
+	}
+	return append([]domain.SalvageAction{action}, actions...)
 }
 
 func confirmPrimaryFailure(primary domain.NodeState) (bool, string) {
@@ -206,6 +226,16 @@ func buildBlockingReasons(spec domain.ClusterSpec, oldPrimary, candidate domain.
 			reasons = append(reasons, "strict salvage policy: candidate is behind one or more surviving replicas")
 		}
 	}
+	if primaryFailureConfirmed && oldPrimary.Health == domain.NodeHealthDead && strings.TrimSpace(oldPrimary.GTIDExecuted) == "" && spec.Replication.Salvage.Policy != domain.SalvageAvailabilityFirst {
+		if !nodeHasSSHBinlogSalvage(spec, oldPrimary.ID) {
+			reasons = append(reasons, "old primary GTID is unknown and SSH binlog salvage is not configured")
+		} else if strings.TrimSpace(candidate.GTIDExecuted) == "" {
+			reasons = append(reasons, "old primary GTID is unknown and candidate GTID is unavailable for SSH binlog salvage filtering")
+		}
+	}
+	if primaryFailureConfirmed && oldPrimary.Health == domain.NodeHealthDead && recovery.MissingFromPrimaryKnown && strings.TrimSpace(recovery.MissingFromPrimarySet) != "" && spec.Replication.Salvage.Policy == domain.SalvageIfPossible && !nodeHasSSHBinlogSalvage(spec, oldPrimary.ID) {
+		reasons = append(reasons, "old primary is SQL-dead and missing transactions require SSH binlog salvage")
+	}
 	for _, finding := range assessment.Errors() {
 		if finding.NodeID != "" && finding.NodeID != candidate.ID && finding.NodeID != oldPrimary.ID {
 			continue
@@ -221,6 +251,22 @@ func buildBlockingReasons(spec domain.ClusterSpec, oldPrimary, candidate domain.
 		reasons = append(reasons, fmt.Sprintf("assessment error[%s]: %s", finding.Code, finding.Message))
 	}
 	return dedupeStrings(reasons)
+}
+
+func nodeHasSSHBinlogSalvage(spec domain.ClusterSpec, id string) bool {
+	for _, n := range spec.Nodes {
+		if n.ID != id {
+			continue
+		}
+		if n.SSH == nil || strings.TrimSpace(n.SSH.User) == "" {
+			return false
+		}
+		// Without at least one auth ref the SSH dial will fail at runtime; treat this as
+		// "not configured" so the planner surfaces a clear blocking reason instead of
+		// permitting a salvage that can only fail after the candidate has been unlocked.
+		return strings.TrimSpace(n.SSH.PasswordRef) != "" || strings.TrimSpace(n.SSH.PrivateKeyRef) != ""
+	}
+	return false
 }
 
 func evaluatePromoteReadiness(spec domain.ClusterSpec, oldPrimary, candidate domain.NodeState, recovery replication.RecoverySummary) []string {

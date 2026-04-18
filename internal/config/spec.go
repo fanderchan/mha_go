@@ -109,15 +109,23 @@ type fileNodeSpec struct {
 }
 
 type fileSQLSpec struct {
-	User        string `json:"user" yaml:"user" toml:"user"`
-	PasswordRef string `json:"password_ref" yaml:"password_ref" toml:"password_ref"`
-	TLSProfile  string `json:"tls_profile" yaml:"tls_profile" toml:"tls_profile"`
+	User                   string `json:"user" yaml:"user" toml:"user"`
+	PasswordRef            string `json:"password_ref" yaml:"password_ref" toml:"password_ref"`
+	ReplicationUser        string `json:"replication_user" yaml:"replication_user" toml:"replication_user"`
+	ReplicationPasswordRef string `json:"replication_password_ref" yaml:"replication_password_ref" toml:"replication_password_ref"`
+	TLSProfile             string `json:"tls_profile" yaml:"tls_profile" toml:"tls_profile"`
 }
 
 type fileSSHSpec struct {
-	User        string `json:"user" yaml:"user" toml:"user"`
-	Port        int    `json:"port" yaml:"port" toml:"port"`
-	PasswordRef string `json:"password_ref" yaml:"password_ref" toml:"password_ref"`
+	User                    string `json:"user" yaml:"user" toml:"user"`
+	Port                    int    `json:"port" yaml:"port" toml:"port"`
+	PasswordRef             string `json:"password_ref" yaml:"password_ref" toml:"password_ref"`
+	PrivateKeyRef           string `json:"private_key_ref" yaml:"private_key_ref" toml:"private_key_ref"`
+	PrivateKeyPassphraseRef string `json:"private_key_passphrase_ref" yaml:"private_key_passphrase_ref" toml:"private_key_passphrase_ref"`
+	BinlogDir               string `json:"binlog_dir" yaml:"binlog_dir" toml:"binlog_dir"`
+	BinlogIndex             string `json:"binlog_index" yaml:"binlog_index" toml:"binlog_index"`
+	BinlogPrefix            string `json:"binlog_prefix" yaml:"binlog_prefix" toml:"binlog_prefix"`
+	MySQLBinlogPath         string `json:"mysqlbinlog_path" yaml:"mysqlbinlog_path" toml:"mysqlbinlog_path"`
 }
 
 type fileAgentSpec struct {
@@ -305,6 +313,9 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 		if n.Port == 0 {
 			n.Port = 3306
 		}
+		if (strings.TrimSpace(n.SQL.ReplicationUser) == "") != (strings.TrimSpace(n.SQL.ReplicationPasswordRef) == "") {
+			return spec, fmt.Errorf("node %q sql.replication_user and sql.replication_password_ref must be set together", n.ID)
+		}
 		spec.Nodes = append(spec.Nodes, domain.NodeSpec{
 			ID:                n.ID,
 			Host:              n.Host,
@@ -317,9 +328,11 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 			Zone:              n.Zone,
 			Labels:            n.Labels,
 			SQL: domain.SQLTargetSpec{
-				User:        n.SQL.User,
-				PasswordRef: n.SQL.PasswordRef,
-				TLSProfile:  n.SQL.TLSProfile,
+				User:                   n.SQL.User,
+				PasswordRef:            n.SQL.PasswordRef,
+				ReplicationUser:        n.SQL.ReplicationUser,
+				ReplicationPasswordRef: n.SQL.ReplicationPasswordRef,
+				TLSProfile:             n.SQL.TLSProfile,
 			},
 		})
 		last := &spec.Nodes[len(spec.Nodes)-1]
@@ -329,9 +342,15 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 				port = 22
 			}
 			last.SSH = &domain.SSHTargetSpec{
-				User:        n.SSH.User,
-				Port:        port,
-				PasswordRef: n.SSH.PasswordRef,
+				User:                    n.SSH.User,
+				Port:                    port,
+				PasswordRef:             n.SSH.PasswordRef,
+				PrivateKeyRef:           n.SSH.PrivateKeyRef,
+				PrivateKeyPassphraseRef: n.SSH.PrivateKeyPassphraseRef,
+				BinlogDir:               n.SSH.BinlogDir,
+				BinlogIndex:             n.SSH.BinlogIndex,
+				BinlogPrefix:            n.SSH.BinlogPrefix,
+				MySQLBinlogPath:         n.SSH.MySQLBinlogPath,
 			}
 		}
 		if n.Agent != nil {

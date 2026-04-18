@@ -16,6 +16,8 @@ import (
 type ActionRunner interface {
 	// PrecheckWriterEndpoint checks that the VIP/proxy switch can run before locking writes.
 	PrecheckWriterEndpoint(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
+	// LockCandidate sets the candidate read-only before the old primary is locked.
+	LockCandidate(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// LockOldPrimary sets the original primary read-only to stop new writes.
 	LockOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error
 	// WaitCandidateCatchUp fetches the original primary's current GTID and blocks until
@@ -47,6 +49,11 @@ func NewDryRunActionRunner(logger *obs.Logger) *DryRunActionRunner {
 
 func (r *DryRunActionRunner) PrecheckWriterEndpoint(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
 	r.logger.Info("dry-run precheck writer endpoint", "candidate", plan.Candidate.ID)
+	return nil
+}
+
+func (r *DryRunActionRunner) LockCandidate(_ context.Context, _ domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	r.logger.Info("dry-run lock candidate", "node", plan.Candidate.ID)
 	return nil
 }
 
@@ -105,6 +112,25 @@ func (r *MySQLActionRunner) PrecheckWriterEndpoint(ctx context.Context, spec dom
 	return writerendpoint.PrecheckWithNodes(ctx, spec, plan.Candidate, plan.OriginalPrimary)
 }
 
+func (r *MySQLActionRunner) LockCandidate(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
+	ns, ok := nodeSpecByID(spec, plan.Candidate.ID)
+	if !ok {
+		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
+	}
+	db, err := r.sql.OpenDB(ctx, ns)
+	if err != nil {
+		return fmt.Errorf("connect to candidate %q: %w", plan.Candidate.ID, err)
+	}
+	defer db.Close()
+	err = sqltransport.FenceReadOnly(ctx, db, plan.Candidate.Capabilities)
+	if sqltransport.IsReadOnlyFenceDegraded(err) {
+		r.logger.Warn("candidate read-only fence degraded: super_read_only failed and read_only fallback was applied",
+			"node", plan.Candidate.ID, "error", err)
+		return nil
+	}
+	return err
+}
+
 func (r *MySQLActionRunner) LockOldPrimary(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
 	ns, ok := nodeSpecByID(spec, plan.OriginalPrimary.ID)
 	if !ok {
@@ -115,7 +141,15 @@ func (r *MySQLActionRunner) LockOldPrimary(ctx context.Context, spec domain.Clus
 		return fmt.Errorf("connect to original primary %q: %w", plan.OriginalPrimary.ID, err)
 	}
 	defer db.Close()
-	return sqltransport.FenceReadOnly(ctx, db, plan.OriginalPrimary.Capabilities)
+	err = sqltransport.FenceReadOnly(ctx, db, plan.OriginalPrimary.Capabilities)
+	if sqltransport.IsReadOnlyFenceDegraded(err) {
+		// Writes are still blocked to non-SUPER users; treat degraded fence as a warning,
+		// not a step failure, so switchover can continue.
+		r.logger.Warn("read-only fence degraded: super_read_only failed and read_only fallback was applied",
+			"node", plan.OriginalPrimary.ID, "error", err)
+		return nil
+	}
+	return err
 }
 
 func (r *MySQLActionRunner) WaitCandidateCatchUp(ctx context.Context, spec domain.ClusterSpec, plan *domain.SwitchoverPlan) error {
@@ -128,10 +162,14 @@ func (r *MySQLActionRunner) WaitCandidateCatchUp(ctx context.Context, spec domai
 	if err != nil {
 		return fmt.Errorf("connect to original primary %q for GTID fetch: %w", plan.OriginalPrimary.ID, err)
 	}
-	gtid, err := sqltransport.GetGTIDExecuted(ctx, origDB)
+	timeout := spec.Replication.Salvage.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	gtid, err := sqltransport.WaitForStableGTIDAfterReadOnly(ctx, origDB, timeout)
 	_ = origDB.Close()
 	if err != nil {
-		return fmt.Errorf("fetch gtid_executed from original primary: %w", err)
+		return fmt.Errorf("wait for stable gtid_executed from original primary: %w", err)
 	}
 
 	// 2. Wait on the candidate until it has applied all those GTIDs.
@@ -145,10 +183,6 @@ func (r *MySQLActionRunner) WaitCandidateCatchUp(ctx context.Context, spec domai
 	}
 	defer candDB.Close()
 
-	timeout := spec.Replication.Salvage.Timeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
 	r.logger.Info("waiting for candidate to catch up", "candidate", plan.Candidate.ID, "gtid", gtid, "timeout", timeout)
 	return sqltransport.WaitForExecutedGTIDSet(ctx, candDB, gtid, timeout)
 }
@@ -171,7 +205,7 @@ func (r *MySQLActionRunner) RepointReplicas(ctx context.Context, spec domain.Clu
 	if !ok {
 		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
 	}
-	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.PasswordRef)
+	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.ReplicationPasswordRefOrDefault())
 	if err != nil {
 		return fmt.Errorf("resolve replication password for new primary: %w", err)
 	}
@@ -199,7 +233,7 @@ func (r *MySQLActionRunner) RepointOldPrimary(ctx context.Context, spec domain.C
 	if !ok {
 		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
 	}
-	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.PasswordRef)
+	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.ReplicationPasswordRefOrDefault())
 	if err != nil {
 		return fmt.Errorf("resolve replication password for new primary: %w", err)
 	}

@@ -60,7 +60,7 @@ ssh root@<manager_ip> "chmod +x /usr/local/bin/mha && mha --help"
 CREATE USER IF NOT EXISTS 'mha'@'<subnet>%'
   IDENTIFIED BY '<password>';
 
-GRANT SELECT, RELOAD, SUPER,
+GRANT SELECT, RELOAD, PROCESS, SUPER,
       REPLICATION SLAVE, REPLICATION CLIENT
   ON *.* TO 'mha'@'<subnet>%';
 
@@ -71,6 +71,10 @@ dbbot 默认值：
 - 用户名：`mha`
 - 密码：`Dbbot_mha@8888`
 - 主机范围：`192.168.161.%`（按实际子网修改）
+- `master_slave.yml` 已创建的复制源账号：`repl` / `Dbbot_repl@8888`，主机范围同样是 `192.168.161.%`
+
+`cluster.yaml` 里要把管理账号和复制账号分开配置。`mha` 用于巡检和编排节点；
+`repl` 会在 mha-go 重指向复制源时写入 `SOURCE_USER` / `SOURCE_PASSWORD`。
 
 验证是否已复制到从库：
 
@@ -123,6 +127,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 
   - id: db2
     host: 192.168.161.12
@@ -133,6 +139,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 
   - id: db3
     host: 192.168.161.13
@@ -143,6 +151,8 @@ nodes:
     sql:
       user: mha
       password_ref: plain:Dbbot_mha@8888
+      replication_user: repl
+      replication_password_ref: plain:Dbbot_repl@8888
 ```
 
 `password_ref` 支持三种形式：
@@ -160,10 +170,10 @@ mha check-repl --config /etc/mha/cluster.yaml
 
 ```
 Cluster: <name>  mode=async-single-primary  primary=db1  nodes=3
-  - db1    role=primary health=alive   addr=192.168.161.11:3306   ro=false
-  - db2    role=replica health=alive   addr=192.168.161.12:3306   ro=true
+  - db1    role=primary health=alive   addr=192.168.161.11:3306   ro=false sro=false
+  - db2    role=replica health=alive   addr=192.168.161.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
-  - db3    role=replica health=alive   addr=192.168.161.13:3306   ro=true
+  - db3    role=replica health=alive   addr=192.168.161.13:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
 Assessment: OK
 ```
@@ -173,11 +183,11 @@ Assessment: OK
 在线切换不中断业务，适合主动运维（机器下线、升级等）：
 
 ```bash
-# Dry-run（默认，不执行 MySQL 写操作）
-mha switch --config /etc/mha/cluster.yaml --new-primary db2
+# Dry-run（不执行 MySQL 写操作）
+mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run
 
 # 真实执行
-mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
+mha switch --config /etc/mha/cluster.yaml --new-primary db2
 ```
 
 ## 步骤七：failover 计划（紧急预案）
@@ -187,7 +197,7 @@ mha switch --config /etc/mha/cluster.yaml --new-primary db2 --dry-run=false
 mha failover-plan --config /etc/mha/cluster.yaml
 
 # 强制执行（primary 已确认死亡时使用）
-mha failover-execute --config /etc/mha/cluster.yaml --dry-run=false
+mha failover-execute --config /etc/mha/cluster.yaml
 ```
 
 ## 常驻监控模式

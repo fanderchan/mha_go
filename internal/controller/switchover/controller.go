@@ -8,6 +8,7 @@ import (
 
 	"mha-go/internal/domain"
 	"mha-go/internal/obs"
+	"mha-go/internal/replication"
 	"mha-go/internal/state"
 	"mha-go/internal/topology"
 )
@@ -73,6 +74,18 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 		_ = c.store.UpdateRun(ctx, run.ID, domain.RunStatusFailed, err.Error())
 		return nil, err
 	}
+	if !candidate.ReadOnly || !candidate.SuperReadOnly {
+		if errantGTID, err := candidateErrantGTID(*primary, *candidate); err != nil {
+			err = fmt.Errorf("switchover precheck failed: validate writable candidate %s GTID: %w", candidate.ID, err)
+			_ = c.store.UpdateRun(ctx, run.ID, domain.RunStatusFailed, err.Error())
+			return nil, err
+		} else if errantGTID != "" {
+			err = fmt.Errorf("switchover precheck failed: writable candidate %s has errant GTIDs not present on original primary %s: %s",
+				candidate.ID, primary.ID, errantGTID)
+			_ = c.store.UpdateRun(ctx, run.ID, domain.RunStatusFailed, err.Error())
+			return nil, err
+		}
+	}
 
 	requiresEndpointSwitch := writerEndpointEnabled(spec.WriterEndpoint.Kind)
 	plan := &domain.SwitchoverPlan{
@@ -95,6 +108,22 @@ func (c *Controller) BuildPlan(ctx context.Context, spec domain.ClusterSpec) (*d
 	return plan, nil
 }
 
+func candidateErrantGTID(primary, candidate domain.NodeState) (string, error) {
+	candidateGTID := strings.TrimSpace(candidate.GTIDExecuted)
+	if candidateGTID == "" {
+		return "", nil
+	}
+	primaryGTID := strings.TrimSpace(primary.GTIDExecuted)
+	if primaryGTID == "" {
+		return "", fmt.Errorf("original primary GTID is unavailable")
+	}
+	errantGTID, _, err := replication.SubtractGTIDSets(candidateGTID, primaryGTID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(errantGTID), nil
+}
+
 func writerEndpointEnabled(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "", "none", "off":
@@ -114,6 +143,7 @@ func buildSwitchoverSteps(spec domain.ClusterSpec, candidateID, origPrimaryID st
 	}
 
 	steps := []domain.SwitchoverStep{
+		pending("lock-candidate"),
 		pending("lock-old-primary"),
 		pending("wait-candidate-catchup"),
 		pending("promote-candidate"),

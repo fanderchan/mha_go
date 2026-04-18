@@ -10,18 +10,21 @@ import (
 	"mha-go/internal/fencing"
 	"mha-go/internal/obs"
 	sqltransport "mha-go/internal/transport/sql"
+	sshtransport "mha-go/internal/transport/ssh"
 	"mha-go/internal/writerendpoint"
 )
 
 // MySQLActionRunner performs failover steps against MySQL using the SQL transport.
 type MySQLActionRunner struct {
 	sql    *sqltransport.MySQLInspector
+	ssh    *sshtransport.Client
 	logger *obs.Logger
 }
 
 func NewMySQLActionRunner(inspector *sqltransport.MySQLInspector, logger *obs.Logger) *MySQLActionRunner {
 	return &MySQLActionRunner{
 		sql:    inspector,
+		ssh:    sshtransport.NewClient(sqltransport.NewRefResolver()),
 		logger: logger,
 	}
 }
@@ -46,14 +49,22 @@ func (r *MySQLActionRunner) FenceOldPrimary(ctx context.Context, spec domain.Clu
 			return fmt.Errorf("connect to old primary %q for fencing: %w", plan.OldPrimary.ID, err)
 		}
 		defer db.Close()
-		return sqltransport.FenceReadOnly(ctx, db, plan.OldPrimary.Capabilities)
+		err = sqltransport.FenceReadOnly(ctx, db, plan.OldPrimary.Capabilities)
+		if sqltransport.IsReadOnlyFenceDegraded(err) {
+			// Writes are still blocked to non-SUPER users; treat degraded fence as a warning,
+			// not a step failure, so a Required read-only fence step does not abort failover.
+			r.logger.Warn("read-only fence degraded: super_read_only failed and read_only fallback was applied",
+				"node", plan.OldPrimary.ID, "error", err)
+			return nil
+		}
+		return err
 	}
 	return coordinator.FenceOldPrimary(ctx, spec, plan.OldPrimary, plan.Candidate, readOnly)
 }
 
 func (r *MySQLActionRunner) ApplySalvageAction(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, action domain.SalvageAction) error {
 	switch action.Kind {
-	case "recover-from-old-primary", "recover-from-replica":
+	case "recover-from-old-primary", "recover-from-replica", "recover-from-old-primary-binlog":
 		donorSpec, ok := nodeSpecByID(spec, action.DonorNodeID)
 		if !ok {
 			return fmt.Errorf("missing node spec for donor %q", action.DonorNodeID)
@@ -62,23 +73,105 @@ func (r *MySQLActionRunner) ApplySalvageAction(ctx context.Context, spec domain.
 		if !ok {
 			return fmt.Errorf("missing node spec for salvage target %q", action.TargetNodeID)
 		}
-		donorPassword, err := r.sql.ResolvePassword(ctx, donorSpec.SQL.PasswordRef)
-		if err != nil {
-			return fmt.Errorf("resolve donor password: %w", err)
+		if action.Kind == "recover-from-old-primary-binlog" || (action.Kind == "recover-from-old-primary" && plan.OldPrimary.Health == domain.NodeHealthDead && donorSpec.SSH != nil) {
+			return r.applySSHBinlogSalvage(ctx, spec, plan, action, donorSpec, targetSpec)
 		}
-		wait := spec.Replication.Salvage.Timeout
-		if wait <= 0 {
-			wait = 30 * time.Minute
+		err := r.applySQLDonorSalvage(ctx, spec, action, donorSpec, targetSpec)
+		if err != nil && action.Kind == "recover-from-old-primary" && donorSpec.SSH != nil {
+			r.logger.Warn("SQL salvage from old primary failed; trying SSH binlog salvage",
+				"donor", action.DonorNodeID, "target", action.TargetNodeID, "error", err)
+			if sshErr := r.applySSHBinlogSalvage(ctx, spec, plan, action, donorSpec, targetSpec); sshErr != nil {
+				return fmt.Errorf("SQL salvage failed: %v; SSH binlog salvage failed: %w", err, sshErr)
+			}
+			return nil
 		}
-		db, err := r.sql.OpenDB(ctx, targetSpec)
-		if err != nil {
-			return fmt.Errorf("connect to salvage target %q: %w", action.TargetNodeID, err)
-		}
-		defer db.Close()
-		return sqltransport.SalvageCatchUpFromDonor(ctx, db, donorSpec, donorPassword, action.MissingGTIDSet, wait)
+		return err
 	default:
 		return fmt.Errorf("unsupported salvage action kind %q", action.Kind)
 	}
+}
+
+func (r *MySQLActionRunner) applySQLDonorSalvage(ctx context.Context, spec domain.ClusterSpec, action domain.SalvageAction, donorSpec, targetSpec domain.NodeSpec) error {
+	donorPassword, err := r.sql.ResolvePassword(ctx, donorSpec.SQL.ReplicationPasswordRefOrDefault())
+	if err != nil {
+		return fmt.Errorf("resolve donor password: %w", err)
+	}
+	wait := spec.Replication.Salvage.Timeout
+	if wait <= 0 {
+		wait = 30 * time.Minute
+	}
+	db, err := r.sql.OpenDB(ctx, targetSpec)
+	if err != nil {
+		return fmt.Errorf("connect to salvage target %q: %w", action.TargetNodeID, err)
+	}
+	defer db.Close()
+	err = sqltransport.SalvageCatchUpFromDonor(ctx, db, donorSpec, donorPassword, action.MissingGTIDSet, wait)
+	if err != nil {
+		// Ensure the replica channel left configured by RepointReplicaToSource is stopped
+		// before returning. Otherwise a later SSH binlog salvage fallback would write to the
+		// candidate concurrently with the IO/SQL thread still pulling from the same donor.
+		if cleanupErr := sqltransport.StopAndResetReplica(ctx, db); cleanupErr != nil {
+			r.logger.Warn("failed to quiesce replica channel after SQL salvage failure",
+				"target", action.TargetNodeID, "error", cleanupErr)
+		}
+	}
+	return err
+}
+
+func (r *MySQLActionRunner) applySSHBinlogSalvage(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan, action domain.SalvageAction, donorSpec, targetSpec domain.NodeSpec) error {
+	if donorSpec.SSH == nil {
+		return fmt.Errorf("donor %q has no ssh config for binlog salvage", donorSpec.ID)
+	}
+	includeGTIDSet := action.MissingGTIDSet
+	excludeGTIDSet := ""
+	if action.Kind == "recover-from-old-primary-binlog" {
+		includeGTIDSet = ""
+		excludeGTIDSet = plan.Candidate.GTIDExecuted
+	}
+	if includeGTIDSet == "" && excludeGTIDSet == "" {
+		return fmt.Errorf("SSH binlog salvage needs a missing GTID set or candidate GTID set filter")
+	}
+
+	targetPassword, err := r.sql.ResolvePassword(ctx, targetSpec.SQL.PasswordRef)
+	if err != nil {
+		return fmt.Errorf("resolve salvage target admin password: %w", err)
+	}
+	db, err := r.sql.OpenDB(ctx, targetSpec)
+	if err != nil {
+		return fmt.Errorf("connect to salvage target %q: %w", action.TargetNodeID, err)
+	}
+	defer db.Close()
+
+	restoreReadOnly, err := sqltransport.TemporarilyDisableReadOnly(ctx, db)
+	if err != nil {
+		return fmt.Errorf("prepare candidate for client-side binlog apply: %w", err)
+	}
+
+	wait := spec.Replication.Salvage.Timeout
+	if wait <= 0 {
+		wait = 30 * time.Minute
+	}
+	r.logger.Info("applying salvaged old-primary binlog over SSH",
+		"donor", action.DonorNodeID, "target", action.TargetNodeID, "include_gtids", includeGTIDSet, "exclude_gtids", excludeGTIDSet)
+	applyErr := sshtransport.ApplyBinlogDump(ctx, r.ssh, sshtransport.BinlogApplyOptions{
+		OldPrimary:        donorSpec,
+		Candidate:         targetSpec,
+		CandidatePassword: targetPassword,
+		IncludeGTIDSet:    includeGTIDSet,
+		ExcludeGTIDSet:    excludeGTIDSet,
+		Timeout:           wait,
+	})
+	restoreErr := restoreReadOnly(ctx)
+	if applyErr != nil {
+		if restoreErr != nil {
+			return fmt.Errorf("SSH binlog salvage failed: %v; restore read-only failed: %w", applyErr, restoreErr)
+		}
+		return applyErr
+	}
+	if restoreErr != nil {
+		return fmt.Errorf("restore read-only after SSH binlog salvage: %w", restoreErr)
+	}
+	return nil
 }
 
 func (r *MySQLActionRunner) PromoteCandidate(ctx context.Context, spec domain.ClusterSpec, plan *domain.FailoverPlan) error {
@@ -99,7 +192,7 @@ func (r *MySQLActionRunner) RepointReplicas(ctx context.Context, spec domain.Clu
 	if !ok {
 		return fmt.Errorf("cluster spec has no node %q for candidate", plan.Candidate.ID)
 	}
-	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.PasswordRef)
+	sourcePassword, err := r.sql.ResolvePassword(ctx, candSpec.SQL.ReplicationPasswordRefOrDefault())
 	if err != nil {
 		return fmt.Errorf("resolve replication password for candidate: %w", err)
 	}

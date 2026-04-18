@@ -59,9 +59,16 @@ nodes:
     expected_role: primary
     candidate_priority: 0
     sql:
-      user: repl
-      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      user: mha
+      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
       tls_profile: default
+    ssh:
+      user: mysql
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      binlog_dir: /var/lib/mysql
+      binlog_prefix: binlog
     agent:
       address: http://10.0.0.11:18080
       auth_token: secret://agent/db1
@@ -73,9 +80,16 @@ nodes:
     expected_role: replica
     candidate_priority: 100
     sql:
-      user: repl
-      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      user: mha
+      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
       tls_profile: default
+    ssh:
+      user: mysql
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      binlog_dir: /var/lib/mysql
+      binlog_prefix: binlog
     agent:
       address: http://10.0.0.12:18080
       auth_token: secret://agent/db2
@@ -87,9 +101,16 @@ nodes:
     expected_role: replica
     candidate_priority: 90
     sql:
-      user: repl
-      password_ref: env:MHA_EXAMPLE_DB_PASSWORD
+      user: mha
+      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
       tls_profile: default
+    ssh:
+      user: mysql
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      binlog_dir: /var/lib/mysql
+      binlog_prefix: binlog
     agent:
       address: http://10.0.0.13:18080
       auth_token: secret://agent/db3

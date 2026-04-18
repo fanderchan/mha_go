@@ -127,8 +127,9 @@ wait_for_mysql db3
 MHA_PASS_SQL="$(sql_escape "$MHA_IT_PASSWORD")"
 mysql_exec db1 "
 CREATE USER IF NOT EXISTS 'mha'@'%' IDENTIFIED BY '$MHA_PASS_SQL';
-GRANT RELOAD,
-      REPLICATION CLIENT,
+	GRANT RELOAD,
+	      PROCESS,
+	      REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
       SYSTEM_VARIABLES_ADMIN,
@@ -186,7 +187,9 @@ replication:
     wait_for_replica_count: 0
     timeout: 5s
   salvage:
-    policy: salvage-if-possible
+    # The Docker topology has no SSH path into a stopped primary, so this test
+    # uses availability-first to exercise the real failover mechanics.
+    policy: availability-first
     timeout: 30s
 
 writer_endpoint:
@@ -228,10 +231,10 @@ echo "running check-repl"
 run_mha check-repl --config /cluster.yaml
 
 echo "running switchover dry-run"
-run_mha switch --config /cluster.yaml --new-primary db2
+run_mha switch --config /cluster.yaml --new-primary db2 --dry-run
 
 echo "running switchover execute"
-run_mha switch --config /cluster.yaml --new-primary db2 --dry-run=false
+run_mha switch --config /cluster.yaml --new-primary db2
 
 echo "verifying post-switchover topology"
 run_mha check-repl --config /cluster.yaml
@@ -244,7 +247,7 @@ run_mha failover-plan --config /cluster.yaml --candidate db3
 
 echo "asserting failover-execute dry-run is blocked while primary is alive"
 set +e
-run_mha failover-execute --config /cluster.yaml --candidate db3
+run_mha failover-execute --config /cluster.yaml --candidate db3 --dry-run
 failover_rc=$?
 set -e
 if [[ "$failover_rc" -eq 0 ]]; then
@@ -263,7 +266,7 @@ echo "running failover-plan after primary stop"
 run_mha failover-plan --config /cluster.yaml --candidate db3
 
 echo "running failover execute"
-run_mha failover-execute --config /cluster.yaml --candidate db3 --dry-run=false
+run_mha failover-execute --config /cluster.yaml --candidate db3
 
 echo "verifying post-failover topology"
 mysql_exec db3 "INSERT INTO mha_it.t VALUES (4, 'after-failover');"

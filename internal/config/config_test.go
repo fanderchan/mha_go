@@ -304,6 +304,71 @@ nodes:
 	}
 }
 
+func TestLoadReplicationAndSSHFields(t *testing.T) {
+	yaml := `
+name: app1
+nodes:
+  - id: db1
+    host: 10.0.0.1
+    version_series: "8.4"
+    expected_role: primary
+    sql:
+      user: mha
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
+    ssh:
+      user: mysql
+      port: 2222
+      private_key_ref: file:/etc/mha/id_ed25519
+      binlog_dir: /mysql/binlogs
+      binlog_index: /mysql/binlogs/mysql-bin.index
+      binlog_prefix: mysql-bin
+      mysqlbinlog_path: /usr/bin/mysqlbinlog
+  - id: db2
+    host: 10.0.0.2
+    version_series: "8.4"
+`
+	path := writeTemp(t, ".yaml", yaml)
+	spec, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	db1 := spec.Nodes[0]
+	if db1.SQL.ReplicationUser != "repl" || db1.SQL.ReplicationPasswordRef != "env:MHA_REPL_PASSWORD" {
+		t.Fatalf("replication credentials were not parsed: %+v", db1.SQL)
+	}
+	if db1.SSH == nil {
+		t.Fatal("ssh config was not parsed")
+	}
+	if db1.SSH.Port != 2222 || db1.SSH.BinlogPrefix != "mysql-bin" || db1.SSH.MySQLBinlogPath != "/usr/bin/mysqlbinlog" {
+		t.Fatalf("ssh binlog fields were not parsed: %+v", db1.SSH)
+	}
+}
+
+func TestValidationPartialReplicationCredentials(t *testing.T) {
+	yaml := `
+name: app1
+nodes:
+  - id: db1
+    host: 10.0.0.1
+    version_series: "8.4"
+    expected_role: primary
+    sql:
+      user: mha
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+  - id: db2
+    host: 10.0.0.2
+    version_series: "8.4"
+`
+	path := writeTemp(t, ".yaml", yaml)
+	_, err := LoadFile(path)
+	if err == nil {
+		t.Fatal("expected error when only one replication credential field is set")
+	}
+}
+
 func TestNoPrimaryDeclaredFirstNodeBecomePrimary(t *testing.T) {
 	yaml := `
 name: app1
