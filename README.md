@@ -184,9 +184,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db2
     host: 10.0.0.12
@@ -196,9 +196,9 @@ nodes:
     candidate_priority: 100
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db3
     host: 10.0.0.13
@@ -208,16 +208,20 @@ nodes:
     candidate_priority: 90
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 ```
 
-Set the passwords via environment variables:
+Create the secret files referenced by the config. Keep credentials out of the
+cluster YAML and out of systemd `Environment=` lines:
 
 ```bash
-export MHA_ADMIN_PASSWORD='your-admin-password'
-export MHA_REPL_PASSWORD='your-replication-password'
+install -d -m 0700 /etc/mha/secrets
+printf '%s\n' 'your-admin-password' > /etc/mha/secrets/admin-password
+printf '%s\n' 'your-replication-password' > /etc/mha/secrets/repl-password
+chmod 0600 /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
+chown root:root /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
 ```
 
 ### 5. Verify Replication Health
@@ -278,9 +282,9 @@ The `sql.password_ref` and `sql.replication_password_ref` fields support three s
 
 | Scheme | Example | Notes |
 |--------|---------|-------|
-| `env:VAR` | `env:MHA_ADMIN_PASSWORD` | Read from environment variable (recommended) |
-| `file:/path` | `file:/etc/mha/db.secret` | Read from file; trailing newline stripped |
-| `plain:value` | `plain:s3cr3t` | Literal value — **not recommended for production** |
+| `file:/path` | `file:/etc/mha/secrets/admin-password` | Recommended for production on hosts/VMs. Protect the file with owner and mode, for example `root:root 0600`. Trailing newline is stripped. |
+| `env:VAR` | `env:MHA_ADMIN_PASSWORD` | Useful for short-lived tests, containers, or external secret injection. Avoid putting secrets in shell history or systemd `Environment=` lines. |
+| `plain:value` | `plain:s3cr3t` | Literal value. Use only for local demos/tests; do not use in production. |
 
 ## Production Deployment
 
@@ -297,14 +301,16 @@ Type=simple
 ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml --log-format json
 Restart=on-failure
 RestartSec=5s
-Environment=MHA_ADMIN_PASSWORD=your-admin-password
-Environment=MHA_REPL_PASSWORD=your-replication-password
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+The service above assumes `password_ref: file:/etc/mha/secrets/...` in the
+cluster config. Avoid storing SQL passwords in `Environment=` because process
+environments and unit files are easier to expose during troubleshooting.
 
 ```bash
 systemctl daemon-reload

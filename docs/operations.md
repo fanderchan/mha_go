@@ -108,9 +108,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db2
     host: 10.0.0.12
@@ -119,9 +119,19 @@ nodes:
     expected_role: replica
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
+```
+
+Create those secret files on the manager host:
+
+```bash
+install -d -m 0700 /etc/mha/secrets
+printf '%s\n' 'admin-password' > /etc/mha/secrets/admin-password
+printf '%s\n' 'repl-password' > /etc/mha/secrets/repl-password
+chmod 0600 /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
+chown root:root /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
 ```
 
 ### Full field reference
@@ -281,9 +291,9 @@ The `sql.password_ref`, `sql.replication_password_ref`, `ssh.password_ref`, `ssh
 
 | Scheme | Example | Notes |
 |--------|---------|-------|
-| `env:VARNAME` | `env:MHA_ADMIN_PASSWORD` | Read from environment variable at runtime. |
-| `file:/absolute/path` | `file:/etc/mha/db.secret` | Read from file; trailing `\r\n` stripped. |
-| `plain:value` | `plain:s3cr3t` | Literal — not recommended for production. |
+| `file:/absolute/path` | `file:/etc/mha/secrets/admin-password` | Recommended for production host/VM deployments. Protect with filesystem ownership and permissions; trailing `\r\n` is stripped. |
+| `env:VARNAME` | `env:MHA_ADMIN_PASSWORD` | Useful for temporary tests, containers, or external secret injection. Avoid shell history and systemd `Environment=` for real secrets. |
+| `plain:value` | `plain:s3cr3t` | Literal. Local demo/test only; not for production. |
 
 ---
 

@@ -109,9 +109,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db2
     host: 10.0.0.12
@@ -120,9 +120,19 @@ nodes:
     expected_role: replica
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
+```
+
+在 manager 主机上创建这些 secret 文件：
+
+```bash
+install -d -m 0700 /etc/mha/secrets
+printf '%s\n' '管理账号密码' > /etc/mha/secrets/admin-password
+printf '%s\n' '复制账号密码' > /etc/mha/secrets/repl-password
+chmod 0600 /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
+chown root:root /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
 ```
 
 ### 完整字段参考
@@ -282,9 +292,9 @@ fencing:
 
 | 格式 | 示例 | 说明 |
 |------|------|------|
-| `env:变量名` | `env:MHA_ADMIN_PASSWORD` | 运行时从环境变量读取。 |
-| `file:/绝对路径` | `file:/etc/mha/db.secret` | 从文件读取；自动去除尾部 `\r\n`。 |
-| `plain:值` | `plain:s3cr3t` | 明文 —— 不建议用于生产环境。 |
+| `file:/绝对路径` | `file:/etc/mha/secrets/admin-password` | 生产主机/VM 部署推荐。用文件属主和权限保护；尾部 `\r\n` 会自动去除。 |
+| `env:变量名` | `env:MHA_ADMIN_PASSWORD` | 适合临时测试、容器或外部 secret 注入。真实密码不要进 shell history 或 systemd `Environment=`。 |
+| `plain:值` | `plain:s3cr3t` | 明文。只适合本地 demo/测试，不要用于生产环境。 |
 
 ---
 

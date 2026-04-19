@@ -125,11 +125,13 @@ nodes:
     sql:
       # Administrative SQL account for discovery, checks, fencing, and promotion.
       user: mha
-      # Credential reference: env:NAME, file:/path, or plain:value.
-      password_ref: env:MHA_ADMIN_PASSWORD
+      # Credential reference. Production should prefer file:/path with 0600
+      # permissions; env:NAME is for temporary tests/containers; plain:value is
+      # local-demo only.
+      password_ref: file:/etc/mha/secrets/admin-password
       # Replication account written into CHANGE REPLICATION SOURCE TO.
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
       # disabled, default/required, preferred, or skip-verify.
       tls_profile: disabled
     ssh:
@@ -169,9 +171,9 @@ nodes:
       tier: database
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
       tls_profile: disabled
     ssh:
       user: mysql
@@ -198,9 +200,9 @@ nodes:
       tier: database
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
       tls_profile: disabled
     ssh:
       user: mysql

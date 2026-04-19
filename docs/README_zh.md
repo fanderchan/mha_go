@@ -183,9 +183,9 @@ nodes:
     expected_role: primary
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db2
     host: 10.0.0.12
@@ -195,9 +195,9 @@ nodes:
     candidate_priority: 100
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 
   - id: db3
     host: 10.0.0.13
@@ -207,16 +207,20 @@ nodes:
     candidate_priority: 90
     sql:
       user: mha
-      password_ref: env:MHA_ADMIN_PASSWORD
+      password_ref: file:/etc/mha/secrets/admin-password
       replication_user: repl
-      replication_password_ref: env:MHA_REPL_PASSWORD
+      replication_password_ref: file:/etc/mha/secrets/repl-password
 ```
 
-通过环境变量设置密码：
+创建配置中引用的 secret 文件。不要把密码写进集群 YAML，也不要写进 systemd
+的 `Environment=`：
 
 ```bash
-export MHA_ADMIN_PASSWORD='你的管理账号强密码'
-export MHA_REPL_PASSWORD='你的复制账号强密码'
+install -d -m 0700 /etc/mha/secrets
+printf '%s\n' '你的管理账号强密码' > /etc/mha/secrets/admin-password
+printf '%s\n' '你的复制账号强密码' > /etc/mha/secrets/repl-password
+chmod 0600 /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
+chown root:root /etc/mha/secrets/admin-password /etc/mha/secrets/repl-password
 ```
 
 ### 5. 验证复制健康状态
@@ -277,9 +281,9 @@ Assessment: OK
 
 | 格式 | 示例 | 说明 |
 |------|------|------|
-| `env:变量名` | `env:MHA_ADMIN_PASSWORD` | 从环境变量读取（推荐） |
-| `file:路径` | `file:/etc/mha/db.secret` | 从文件读取；自动去除尾部换行 |
-| `plain:值` | `plain:s3cr3t` | 明文 — **不建议用于生产环境** |
+| `file:路径` | `file:/etc/mha/secrets/admin-password` | 生产环境推荐。用属主和权限保护文件，例如 `root:root 0600`；尾部换行会自动去除。 |
+| `env:变量名` | `env:MHA_ADMIN_PASSWORD` | 适合临时测试、容器或外部 secret 注入。避免把密码写进 shell history 或 systemd `Environment=`。 |
+| `plain:值` | `plain:s3cr3t` | 明文。只适合本地 demo/测试，不要用于生产环境。 |
 
 ## 生产部署
 
@@ -296,14 +300,15 @@ Type=simple
 ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml --log-format json
 Restart=on-failure
 RestartSec=5s
-Environment=MHA_ADMIN_PASSWORD=your-admin-password
-Environment=MHA_REPL_PASSWORD=your-replication-password
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+上面的服务示例假设集群配置使用 `password_ref: file:/etc/mha/secrets/...`。
+不要把 SQL 密码放进 `Environment=`，进程环境和 unit 文件在排障时更容易暴露。
 
 ```bash
 systemctl daemon-reload
