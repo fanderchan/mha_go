@@ -85,10 +85,20 @@ SET GLOBAL rpl_semi_sync_replica_enabled = ON; -- on replicas
 
 ## 2. Config file reference
 
+Start with [examples/cluster-8.4.yaml](../examples/cluster-8.4.yaml) for a
+small 3-node template. Use
+[examples/cluster-8.4.full.yaml](../examples/cluster-8.4.full.yaml) when you
+need a commented example of every field.
+
 A minimal two-node cluster (`cluster.yaml`):
 
 ```yaml
 name: app1
+
+replication:
+  mode: gtid
+  semi_sync:
+    policy: disabled
 
 nodes:
   - id: db1
@@ -123,7 +133,7 @@ Unique cluster name. Used in log messages, lease keys, and hook env vars.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `kind` | `async-single-primary` | Topology kind. Only `async-single-primary` is supported in v1. |
+| `kind` | `mysql-replication-single-primary` | Topology kind. Only `mysql-replication-single-primary` is supported in v1. This means ordinary MySQL single-primary replication; both pure async and semi-sync deployments use this same kind. |
 | `single_writer` | `true` | Enforce single-writer invariant. |
 | `allow_cascading_replicas` | `false` | Allow replicas that replicate from another replica, not directly from primary. |
 
@@ -152,7 +162,7 @@ controller:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `mode` | `gtid` | Only `gtid` is supported. |
-| `semi_sync.policy` | `preferred` | `disabled`, `preferred`, or `required`. |
+| `semi_sync.policy` | `preferred` | `disabled`, `preferred`, or `required`. This controls semi-sync expectations inside the `mysql-replication-single-primary` topology; it is not a separate topology kind. |
 | `semi_sync.wait_for_replica_count` | `0` | Minimum semi-sync replicas required (only enforced at check time). |
 | `semi_sync.timeout` | `5s` | Semi-sync ACK timeout (informational; actual timeout set on MySQL). |
 | `salvage.policy` | `salvage-if-possible` | See [Salvage policy](#10-salvage-policy). |

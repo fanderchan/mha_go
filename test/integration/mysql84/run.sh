@@ -166,7 +166,7 @@ cat >"$CONFIG_FILE" <<YAML
 name: mysql84-integration
 
 topology:
-  kind: async-single-primary
+  kind: mysql-replication-single-primary
   single_writer: true
   allow_cascading_replicas: false
 

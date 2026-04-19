@@ -10,7 +10,7 @@ import (
 type TopologyKind string
 
 const (
-	TopologyAsyncSinglePrimary            TopologyKind = "async-single-primary"
+	TopologyMySQLReplicationSinglePrimary TopologyKind = "mysql-replication-single-primary"
 	TopologyGroupReplicationSinglePrimary TopologyKind = "group-replication-single-primary"
 	TopologyGroupReplicationMultiPrimary  TopologyKind = "group-replication-multi-primary"
 	TopologyInnoDBCluster                 TopologyKind = "innodb-cluster"

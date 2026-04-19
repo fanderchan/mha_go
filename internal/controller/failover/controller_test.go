@@ -31,7 +31,7 @@ func TestBuildPlanBlocksWhenPrimaryStillAlive(t *testing.T) {
 			},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{
@@ -116,7 +116,7 @@ func TestBuildPlanIncludesSalvageActions(t *testing.T) {
 			},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{
@@ -220,7 +220,7 @@ func TestBuildPlanAddsSSHBinlogSalvageWhenOldPrimaryGTIDUnknown(t *testing.T) {
 			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{
@@ -288,7 +288,7 @@ func TestBuildPlanBlocksUnknownOldPrimaryGTIDWithoutSSH(t *testing.T) {
 			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{
@@ -356,7 +356,7 @@ func TestBuildPlanBlocksWritableCandidatePromotion(t *testing.T) {
 			},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{
@@ -441,7 +441,7 @@ func TestBuildPlanSkipsDeadOrdinaryReplicaForRepoint(t *testing.T) {
 			Lease: domain.LeaseSpec{Backend: "local-memory", TTL: 15 * time.Second},
 		},
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Replication: domain.ReplicationSpec{

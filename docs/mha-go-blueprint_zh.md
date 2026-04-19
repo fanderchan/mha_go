@@ -11,7 +11,7 @@
 
 目标不是逐行复刻 `mha4mysql-manager`/`mha4mysql-node` 0.58，而是：
 
-- 继承 MHA 在异步复制单写拓扑上的核心能力
+- 继承 MHA 在 MySQL 单主复制拓扑上的核心能力
 - 解决 0.58 的主要痛点
 - 明确只支持现代版本与现代运维方式
 - 为后续扩展到 Group Replication / InnoDB Cluster 预留规范
@@ -42,7 +42,7 @@
 
 当前版本只覆盖：
 
-- 异步复制单写架构
+- MySQL 单主复制拓扑（`topology.kind: mysql-replication-single-primary`）
 - GTID 复制
 - 可选半同步复制
 - 单主多从
@@ -502,7 +502,7 @@ hook 只用于告警、审计、兼容旧回调和外部通知，不承载 VIP/p
 
 ### 11.1 原则
 
-- 不把 GR/Cluster 硬塞进异步复制控制器
+- 不把 GR/Cluster 硬塞进 MySQL 复制控制器
 - 抽象“拓扑模式”和“writer 管理方式”
 
 ### 11.2 预留接口
@@ -519,14 +519,14 @@ type TopologyMode interface {
 
 首批模式：
 
-- `AsyncSinglePrimaryMode`
+- `MySQLReplicationSinglePrimaryMode`
 - `GroupReplicationSinglePrimaryMode`
 - `GroupReplicationMultiPrimaryMode`
 - `InnoDBClusterMode`
 
 ### 11.3 需要提前考虑的点
 
-- GR 自带主选举，不能照搬异步复制的提升逻辑
+- GR 自带主选举，不能照搬 MySQL 复制的提升逻辑
 - InnoDB Cluster 的 writer 切换更依赖 metadata 和 Router
 - endpoint 切换和 fencing 责任边界不同
 - 监控维度不再只是 `SHOW REPLICA STATUS`

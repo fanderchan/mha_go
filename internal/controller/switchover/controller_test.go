@@ -28,7 +28,7 @@ func TestBuildPlanRejectsErrantCandidateGTID(t *testing.T) {
 			ID:    "manager-1",
 			Lease: domain.LeaseSpec{TTL: 15 * time.Second},
 		},
-		Topology:    domain.TopologySpec{Kind: domain.TopologyAsyncSinglePrimary, SingleWriter: true},
+		Topology:    domain.TopologySpec{Kind: domain.TopologyMySQLReplicationSinglePrimary, SingleWriter: true},
 		Replication: domain.ReplicationSpec{Mode: domain.ReplicationModeGTID},
 		Nodes: []domain.NodeSpec{
 			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},
@@ -81,7 +81,7 @@ func TestBuildPlanAllowsWritableCandidateWithoutErrantGTID(t *testing.T) {
 			ID:    "manager-1",
 			Lease: domain.LeaseSpec{TTL: 15 * time.Second},
 		},
-		Topology:    domain.TopologySpec{Kind: domain.TopologyAsyncSinglePrimary, SingleWriter: true},
+		Topology:    domain.TopologySpec{Kind: domain.TopologyMySQLReplicationSinglePrimary, SingleWriter: true},
 		Replication: domain.ReplicationSpec{Mode: domain.ReplicationModeGTID},
 		Nodes: []domain.NodeSpec{
 			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},
@@ -134,7 +134,7 @@ func TestBuildPlanAllowsReadOnlyCandidateWithLocalGTID(t *testing.T) {
 			ID:    "manager-1",
 			Lease: domain.LeaseSpec{TTL: 15 * time.Second},
 		},
-		Topology:    domain.TopologySpec{Kind: domain.TopologyAsyncSinglePrimary, SingleWriter: true},
+		Topology:    domain.TopologySpec{Kind: domain.TopologyMySQLReplicationSinglePrimary, SingleWriter: true},
 		Replication: domain.ReplicationSpec{Mode: domain.ReplicationModeGTID},
 		Nodes: []domain.NodeSpec{
 			{ID: "db1", ExpectedRole: domain.NodeRolePrimary, VersionSeries: "8.4"},

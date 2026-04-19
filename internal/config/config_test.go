@@ -231,6 +231,27 @@ nodes:
 	}
 }
 
+func TestValidationRejectsOldAsyncTopologyKind(t *testing.T) {
+	yaml := `
+name: app1
+topology:
+  kind: async-single-primary
+nodes:
+  - id: db1
+    host: 10.0.0.1
+    version_series: "8.4"
+    expected_role: primary
+  - id: db2
+    host: 10.0.0.2
+    version_series: "8.4"
+`
+	path := writeTemp(t, ".yaml", yaml)
+	_, err := LoadFile(path)
+	if err == nil {
+		t.Fatal("expected error for old async-single-primary topology kind")
+	}
+}
+
 func TestDefaultsAreApplied(t *testing.T) {
 	path := writeTemp(t, ".yaml", minimalYAML)
 	spec, err := LoadFile(path)
@@ -246,9 +267,9 @@ func TestDefaultsAreApplied(t *testing.T) {
 	if spec.Controller.ID != "controller-1" {
 		t.Fatalf("Controller.ID = %q, want controller-1", spec.Controller.ID)
 	}
-	// Topology kind defaults to async-single-primary.
-	if spec.Topology.Kind != domain.TopologyAsyncSinglePrimary {
-		t.Fatalf("Topology.Kind = %q, want async-single-primary", spec.Topology.Kind)
+	// Topology kind defaults to mysql-replication-single-primary.
+	if spec.Topology.Kind != domain.TopologyMySQLReplicationSinglePrimary {
+		t.Fatalf("Topology.Kind = %q, want mysql-replication-single-primary", spec.Topology.Kind)
 	}
 	// First node becomes primary when none is declared.
 	// (in minimalYAML we explicitly set it, so just check port default)
@@ -398,5 +419,20 @@ func TestLoadYMLExtension(t *testing.T) {
 	}
 	if _, err := LoadFile(path); err != nil {
 		t.Fatalf("LoadFile (.yml): %v", err)
+	}
+}
+
+func TestExampleConfigsLoad(t *testing.T) {
+	for _, name := range []string{
+		"cluster-8.4.yaml",
+		"cluster-8.4.full.yaml",
+		"cluster-test.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "examples", name)
+			if _, err := LoadFile(path); err != nil {
+				t.Fatalf("LoadFile(%s): %v", path, err)
+			}
+		})
 	}
 }

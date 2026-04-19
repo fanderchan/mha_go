@@ -158,16 +158,23 @@ Copy and edit the example config:
 cp examples/cluster-8.4.yaml /etc/mha/cluster.yaml
 ```
 
+`examples/cluster-8.4.yaml` is the starter template. It intentionally leaves out
+advanced sections such as VIP/proxy switching, custom fencing, hooks, and SSH
+binlog salvage. Use [examples/cluster-8.4.full.yaml](examples/cluster-8.4.full.yaml)
+as the field-by-field reference when enabling those features.
+
 Minimal configuration (`cluster.yaml`):
 
 ```yaml
 name: my-cluster
 
 topology:
-  kind: async-single-primary
+  kind: mysql-replication-single-primary
 
 replication:
   mode: gtid
+  semi_sync:
+    policy: disabled
 
 nodes:
   - id: db1
@@ -222,7 +229,7 @@ export MHA_REPL_PASSWORD='your-replication-password'
 Expected output:
 
 ```
-Cluster: my-cluster  mode=async-single-primary  primary=db1  nodes=3
+Cluster: my-cluster  mode=mysql-replication-single-primary  primary=db1  nodes=3
   - db1    role=primary health=alive   addr=10.0.0.11:3306   ro=false sro=false
   - db2    role=replica health=alive   addr=10.0.0.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
@@ -316,7 +323,8 @@ journalctl -u mha-manager -f
 | [Deployment Guide](docs/deploy-mha-go.md) | Step-by-step deployment with [dbbot](https://github.com/fanderchan/dbbot) |
 | [Testing Guide](docs/testing.md) | Unit, CI, and local MySQL 8.4 integration tests |
 | [Changelog](CHANGELOG.md) | Release history |
-| [Example: MySQL 8.4](examples/cluster-8.4.yaml) | Annotated config for a 3-node cluster |
+| [Example: MySQL 8.4 starter](examples/cluster-8.4.yaml) | Small starter config for a 3-node cluster |
+| [Example: MySQL 8.4 full reference](examples/cluster-8.4.full.yaml) | Verbose field-by-field annotated config |
 
 ## License
 

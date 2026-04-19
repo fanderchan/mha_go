@@ -1,0 +1,210 @@
+# Full field reference for a MySQL 8.4 GTID single-primary cluster.
+#
+# This file is intentionally verbose. New deployments should start from
+# examples/cluster-8.4.yaml and copy sections from here only when needed.
+
+# Unique cluster name. Appears in logs, lease keys, and hook env vars.
+name: app1
+
+topology:
+  # v1 supports only mysql-replication-single-primary. This is the topology family for
+  # ordinary MySQL single-primary replication; semi-sync is still this kind and
+  # is configured separately under replication.semi_sync. GR/InnoDB Cluster
+  # names are reserved.
+  kind: mysql-replication-single-primary
+  # Keep exactly one writable primary in the topology.
+  single_writer: true
+  # false means every replica must replicate directly from the primary.
+  allow_cascading_replicas: false
+
+controller:
+  # Unique ID for this manager process; used as the lease owner.
+  id: manager-1
+  lease:
+    # v1 provides local-memory lease only; external/distributed lease is roadmap.
+    backend: local-memory
+    # Lease lifetime for a single manager process.
+    ttl: 15s
+  monitor:
+    # Primary probe interval for the long-running manager.
+    interval: 1s
+    # Consecutive probe failures before secondary confirmation starts.
+    failure_threshold: 3
+    # Timeout for the final topology rediscovery before declaring primary dead.
+    reconfirm_timeout: 3s
+  # Extra observer checks before failover. observer_node must match nodes[].id.
+  secondary_checks:
+    - name: replica2-observer
+      observer_node: db2
+      timeout: 2s
+    - name: replica3-observer
+      observer_node: db3
+      timeout: 2s
+
+replication:
+  # Only gtid is supported. File/position replication is intentionally absent.
+  mode: gtid
+  semi_sync:
+    # disabled: ignore semi-sync state.
+    # preferred: warn when semi-sync is degraded.
+    # required: treat degraded semi-sync as an error in health checks.
+    policy: preferred
+    # Minimum operational semi-sync replicas expected by health checks.
+    wait_for_replica_count: 1
+    # Informational timeout used by mha-go checks; configure MySQL timeout in MySQL.
+    timeout: 5s
+  salvage:
+    # strict: block when missing transactions are detected.
+    # salvage-if-possible: recover missing GTIDs or abort failover.
+    # availability-first: warn and continue if recovery fails.
+    policy: salvage-if-possible
+    # Maximum time to wait for GTID catch-up during salvage.
+    timeout: 30s
+
+writer_endpoint:
+  # none/off: no endpoint movement.
+  # vip/proxy: execute command after promotion to move the write endpoint.
+  kind: none
+  # VIP address or proxy writer identifier passed to endpoint scripts.
+  target: ""
+  # Required for kind vip/proxy unless MHA_WRITER_ENDPOINT_COMMAND is set.
+  command: ""
+  # Optional pre-promotion endpoint readiness check.
+  precheck_command: ""
+  # Optional post-switch endpoint verification.
+  verify_command: ""
+
+fencing:
+  # Fencing answers "can the old primary still accept writes?".
+  # If this section is omitted, mha-go uses one required read_only fence.
+  steps:
+    - kind: read_only
+      # Required fence failure aborts failover; optional failure only warns.
+      required: true
+      # command is ignored for read_only, used by command/vip/proxy/stonith/cloud_route.
+      command: ""
+      # Optional per-step timeout. 0s means no step-specific timeout.
+      timeout: 0s
+    # Example external fence. Uncomment and edit when using power, cloud, or proxy isolation.
+    # - kind: stonith
+    #   required: false
+    #   command: /usr/local/bin/mha-fence-old-primary.sh
+    #   timeout: 10s
+
+hooks:
+  # Enables legacy shell hook dispatch for notification/audit callbacks.
+  shell_compat: false
+  # Executed with sh -c for each hook event when shell_compat is true.
+  command: ""
+
+nodes:
+  - id: db1
+    # MySQL host/IP and port.
+    host: 10.0.0.11
+    port: 3306
+    # Supported values: 8.4 or 9.7. 8.4 is the release baseline.
+    version_series: "8.4"
+    # Expected startup role: primary, replica, or observer.
+    expected_role: primary
+    # Higher values are preferred for automatic promotion.
+    candidate_priority: 0
+    # true excludes this node from promotion.
+    no_master: false
+    # true downgrades this node's assessment errors to warnings.
+    ignore_fail: false
+    # Informational placement label used by operators and future policies.
+    zone: az-a
+    # Free-form labels for inventory/automation.
+    labels:
+      service: app1
+      tier: database
+    sql:
+      # Administrative SQL account for discovery, checks, fencing, and promotion.
+      user: mha
+      # Credential reference: env:NAME, file:/path, or plain:value.
+      password_ref: env:MHA_ADMIN_PASSWORD
+      # Replication account written into CHANGE REPLICATION SOURCE TO.
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
+      # disabled, default/required, preferred, or skip-verify.
+      tls_profile: disabled
+    ssh:
+      # SSH is optional. Configure it for old-primary local-binlog salvage.
+      user: mysql
+      port: 22
+      # Optional password auth. Prefer private_key_ref in production.
+      password_ref: ""
+      # Private key content reference; file: reads the key file at runtime.
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      # Optional passphrase reference for encrypted private keys.
+      private_key_passphrase_ref: ""
+      # Directory containing local MySQL binlogs on the MySQL host.
+      binlog_dir: /var/lib/mysql
+      # Optional explicit binlog index path; empty uses prefix-based discovery.
+      binlog_index: ""
+      # Local binlog prefix, for example binlog or mysql-bin.
+      binlog_prefix: binlog
+      # Remote mysqlbinlog path.
+      mysqlbinlog_path: mysqlbinlog
+    # Agent transport is parsed but reserved; current v1 execution uses SQL and optional SSH.
+    # agent:
+    #   address: http://10.0.0.11:18080
+    #   auth_token: env:MHA_AGENT_TOKEN_DB1
+
+  - id: db2
+    host: 10.0.0.12
+    port: 3306
+    version_series: "8.4"
+    expected_role: replica
+    candidate_priority: 100
+    no_master: false
+    ignore_fail: false
+    zone: az-b
+    labels:
+      service: app1
+      tier: database
+    sql:
+      user: mha
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
+      tls_profile: disabled
+    ssh:
+      user: mysql
+      port: 22
+      password_ref: ""
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      private_key_passphrase_ref: ""
+      binlog_dir: /var/lib/mysql
+      binlog_index: ""
+      binlog_prefix: binlog
+      mysqlbinlog_path: mysqlbinlog
+
+  - id: db3
+    host: 10.0.0.13
+    port: 3306
+    version_series: "8.4"
+    expected_role: replica
+    candidate_priority: 90
+    no_master: false
+    ignore_fail: false
+    zone: az-c
+    labels:
+      service: app1
+      tier: database
+    sql:
+      user: mha
+      password_ref: env:MHA_ADMIN_PASSWORD
+      replication_user: repl
+      replication_password_ref: env:MHA_REPL_PASSWORD
+      tls_profile: disabled
+    ssh:
+      user: mysql
+      port: 22
+      password_ref: ""
+      private_key_ref: file:/etc/mha/ssh/id_ed25519
+      private_key_passphrase_ref: ""
+      binlog_dir: /var/lib/mysql
+      binlog_index: ""
+      binlog_prefix: binlog
+      mysqlbinlog_path: mysqlbinlog

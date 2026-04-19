@@ -90,7 +90,7 @@ mysql -h 192.168.161.12 -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
 name: <cluster-name>
 
 topology:
-  kind: async-single-primary
+  kind: mysql-replication-single-primary
   single_writer: true
   allow_cascading_replicas: false
 
@@ -169,7 +169,7 @@ mha check-repl --config /etc/mha/cluster.yaml
 期望输出示例：
 
 ```
-Cluster: <name>  mode=async-single-primary  primary=db1  nodes=3
+Cluster: <name>  mode=mysql-replication-single-primary  primary=db1  nodes=3
   - db1    role=primary health=alive   addr=192.168.161.11:3306   ro=false sro=false
   - db2    role=replica health=alive   addr=192.168.161.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true

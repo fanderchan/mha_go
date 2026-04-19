@@ -112,7 +112,7 @@ func testSpec() domain.ClusterSpec {
 				ReconfirmTimeout: 50 * time.Millisecond,
 			},
 		},
-		Topology: domain.TopologySpec{Kind: domain.TopologyAsyncSinglePrimary},
+		Topology: domain.TopologySpec{Kind: domain.TopologyMySQLReplicationSinglePrimary},
 		Replication: domain.ReplicationSpec{
 			Mode:     domain.ReplicationModeGTID,
 			SemiSync: domain.SemiSyncSpec{Policy: domain.SemiSyncPreferred},

@@ -86,10 +86,20 @@ SET GLOBAL rpl_semi_sync_replica_enabled = ON; -- 在从库执行
 
 ## 2. 配置文件参考
 
+新集群建议先复制 [examples/cluster-8.4.yaml](../examples/cluster-8.4.yaml)，
+它是小而直接的三节点起步模板。需要 VIP/proxy、fencing、hooks、SSH binlog
+salvage 或逐字段注释时，再看
+[examples/cluster-8.4.full.yaml](../examples/cluster-8.4.full.yaml)。
+
 最小的两节点集群配置（`cluster.yaml`）：
 
 ```yaml
 name: app1
+
+replication:
+  mode: gtid
+  semi_sync:
+    policy: disabled
 
 nodes:
   - id: db1
@@ -124,7 +134,7 @@ nodes:
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `kind` | `async-single-primary` | 拓扑类型。v1 仅支持 `async-single-primary`。 |
+| `kind` | `mysql-replication-single-primary` | 拓扑类型。v1 仅支持 `mysql-replication-single-primary`。这里表示普通 MySQL 单主复制拓扑；纯异步和半同步都属于这个 kind。 |
 | `single_writer` | `true` | 强制单写约束。 |
 | `allow_cascading_replicas` | `false` | 是否允许从库的从库（级联复制）。 |
 
@@ -153,7 +163,7 @@ controller:
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `mode` | `gtid` | 仅支持 `gtid`。 |
-| `semi_sync.policy` | `preferred` | `disabled`、`preferred`、`required` 之一。 |
+| `semi_sync.policy` | `preferred` | `disabled`、`preferred`、`required` 之一。它是在 `mysql-replication-single-primary` 拓扑里的半同步期望，不是另一种 topology kind。 |
 | `semi_sync.wait_for_replica_count` | `0` | 所需的最小半同步从库数量（仅在检查时强制）。 |
 | `semi_sync.timeout` | `5s` | 半同步 ACK 超时（信息性字段；实际超时由 MySQL 控制）。 |
 | `salvage.policy` | `salvage-if-possible` | 详见 [Salvage 策略](#10-salvage-策略)。 |

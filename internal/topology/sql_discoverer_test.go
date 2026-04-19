@@ -29,7 +29,7 @@ func TestSQLDiscovererDiscover(t *testing.T) {
 	spec := domain.ClusterSpec{
 		Name: "app1",
 		Topology: domain.TopologySpec{
-			Kind:         domain.TopologyAsyncSinglePrimary,
+			Kind:         domain.TopologyMySQLReplicationSinglePrimary,
 			SingleWriter: true,
 		},
 		Controller: domain.ControllerSpec{

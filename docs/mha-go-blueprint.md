@@ -11,7 +11,7 @@ This document defines the direction of the Go rewrite of MHA and serves as the b
 
 The goal is not to replicate `mha4mysql-manager` / `mha4mysql-node` 0.58 line-by-line, but to:
 
-- Inherit MHA's core capabilities for async single-writer replication topologies
+- Inherit MHA's core capabilities for MySQL single-primary replication topologies
 - Resolve the main pain points of 0.58
 - Commit explicitly to modern versions and modern operating practices
 - Leave room for Group Replication / InnoDB Cluster without implementing them yet
@@ -42,7 +42,7 @@ Notes:
 
 This version covers only:
 
-- Async single-writer replication
+- MySQL replication single-primary topology (`topology.kind: mysql-replication-single-primary`)
 - GTID replication
 - Optional semi-sync replication
 - Single primary with multiple replicas
@@ -502,7 +502,7 @@ Not implemented now, but the interface must be reserved.
 
 ### 11.1 Principles
 
-- Do not cram GR/Cluster into the async replication controller
+- Do not cram GR/Cluster into the MySQL replication controller
 - Abstract "topology mode" and "writer management scheme"
 
 ### 11.2 Reserved interface
@@ -519,14 +519,14 @@ type TopologyMode interface {
 
 First set of modes:
 
-- `AsyncSinglePrimaryMode`
+- `MySQLReplicationSinglePrimaryMode`
 - `GroupReplicationSinglePrimaryMode`
 - `GroupReplicationMultiPrimaryMode`
 - `InnoDBClusterMode`
 
 ### 11.3 Points to consider in advance
 
-- GR has its own primary election, so async replication promotion logic cannot be reused directly
+- GR has its own primary election, so MySQL replication promotion logic cannot be reused directly
 - InnoDB Cluster writer switching depends more on metadata and Router
 - Endpoint switching and fencing have different responsibility boundaries
 - Monitoring is no longer just `SHOW REPLICA STATUS`

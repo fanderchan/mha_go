@@ -1,116 +1,77 @@
-name: app1
-topology:
-  kind: async-single-primary
-  single_writer: true
-  allow_cascading_replicas: true
+# Starter config for a MySQL 8.4 GTID single-primary cluster.
+#
+# Copy this file to /etc/mha/cluster.yaml and replace the node addresses,
+# users, and credential references. Keep this starter small; optional VIP/proxy
+# switching, fencing, hooks, and SSH binlog salvage are documented in:
+#
+#   examples/cluster-8.4.full.yaml
+#   docs/operations.md
 
-controller:
-  id: manager-1
-  lease:
-    backend: local-memory
-    ttl: 15s
-  monitor:
-    interval: 1s
-    failure_threshold: 3
-    reconfirm_timeout: 3s
-  secondary_checks:
-    - name: replica2-observer
-      observer_node: db2
-      timeout: 2s
-    - name: replica3-observer
-      observer_node: db3
-      timeout: 2s
+# Cluster name used in logs, leases, and hook environment variables.
+name: app1
+
+# v1 supports mysql-replication-single-primary only. This means ordinary MySQL single-primary
+# replication, and it includes both pure async and semi-sync deployments. Enable
+# semi-sync checks separately under replication.semi_sync.
+topology:
+  kind: mysql-replication-single-primary
 
 replication:
+  # Only GTID replication is supported.
   mode: gtid
+
+  # Use preferred/required only after MySQL semi-sync is installed and enabled.
+  # disabled is the least surprising starter value for a pure async cluster.
   semi_sync:
-    policy: preferred
-    wait_for_replica_count: 1
-    timeout: 5s
+    policy: disabled
+
+  # Conservative default: try to recover missing GTIDs and abort if recovery
+  # fails. Configure per-node ssh blocks from cluster-8.4.full.yaml if you need
+  # old-primary binlog salvage when the old primary is SQL-dead.
   salvage:
     policy: salvage-if-possible
     timeout: 30s
 
+# No VIP/proxy movement in the starter config. Use the full example when the
+# application writes through a movable VIP or proxy writer endpoint.
 writer_endpoint:
-  kind: vip
-  target: 192.0.2.10
-  # command: /usr/local/bin/mha-move-vip.sh   # failover-execute --dry-run=false 时执行（也可设 MHA_WRITER_ENDPOINT_COMMAND）
-  # precheck_command: /usr/local/bin/mha-check-vip.sh # promote 前验证新主能否承载 VIP
-  # verify_command: /usr/local/bin/mha-verify-vip.sh  # 切换后验证 VIP 已指向新主
-
-fencing:
-  steps:
-    - kind: read_only
-      required: true
-    # 可选：接入机房电源、云路由、安全组、代理写池摘除等外部隔离。
-    # - kind: stonith
-    #   required: false
-    #   command: /usr/local/bin/mha-fence-old-primary.sh
-    #   timeout: 10s
-
-hooks:
-  shell_compat: true
+  kind: none
 
 nodes:
   - id: db1
     host: 10.0.0.11
     port: 3306
-    version_series: 8.4
+    version_series: "8.4"
     expected_role: primary
-    candidate_priority: 0
     sql:
       user: mha
-      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      # Use env: or file: in production. Avoid plain: secrets outside tests.
+      password_ref: env:MHA_ADMIN_PASSWORD
+      # Account used by CHANGE REPLICATION SOURCE TO after promote/repoint.
       replication_user: repl
-      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
-      tls_profile: default
-    ssh:
-      user: mysql
-      private_key_ref: file:/etc/mha/ssh/id_ed25519
-      binlog_dir: /var/lib/mysql
-      binlog_prefix: binlog
-    agent:
-      address: http://10.0.0.11:18080
-      auth_token: secret://agent/db1
+      replication_password_ref: env:MHA_REPL_PASSWORD
 
   - id: db2
     host: 10.0.0.12
     port: 3306
-    version_series: 8.4
+    version_series: "8.4"
     expected_role: replica
+    # Higher values are preferred when mha-go auto-selects a new primary.
     candidate_priority: 100
     sql:
       user: mha
-      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
       replication_user: repl
-      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
-      tls_profile: default
-    ssh:
-      user: mysql
-      private_key_ref: file:/etc/mha/ssh/id_ed25519
-      binlog_dir: /var/lib/mysql
-      binlog_prefix: binlog
-    agent:
-      address: http://10.0.0.12:18080
-      auth_token: secret://agent/db2
+      replication_password_ref: env:MHA_REPL_PASSWORD
 
   - id: db3
     host: 10.0.0.13
     port: 3306
-    version_series: 8.4
+    version_series: "8.4"
     expected_role: replica
     candidate_priority: 90
     sql:
       user: mha
-      password_ref: env:MHA_EXAMPLE_ADMIN_PASSWORD
+      password_ref: env:MHA_ADMIN_PASSWORD
       replication_user: repl
-      replication_password_ref: env:MHA_EXAMPLE_REPL_PASSWORD
-      tls_profile: default
-    ssh:
-      user: mysql
-      private_key_ref: file:/etc/mha/ssh/id_ed25519
-      binlog_dir: /var/lib/mysql
-      binlog_prefix: binlog
-    agent:
-      address: http://10.0.0.13:18080
-      auth_token: secret://agent/db3
+      replication_password_ref: env:MHA_REPL_PASSWORD

@@ -142,10 +142,10 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 
 	topologyKind := domain.TopologyKind(strings.TrimSpace(f.Topology.Kind))
 	if topologyKind == "" {
-		topologyKind = domain.TopologyAsyncSinglePrimary
+		topologyKind = domain.TopologyMySQLReplicationSinglePrimary
 	}
 	switch topologyKind {
-	case domain.TopologyAsyncSinglePrimary:
+	case domain.TopologyMySQLReplicationSinglePrimary:
 	case domain.TopologyGroupReplicationSinglePrimary, domain.TopologyGroupReplicationMultiPrimary, domain.TopologyInnoDBCluster:
 		return spec, fmt.Errorf("topology kind %q is reserved but not implemented in v1", topologyKind)
 	default:

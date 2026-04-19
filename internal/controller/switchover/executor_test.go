@@ -87,7 +87,7 @@ func testSpec() domain.ClusterSpec {
 			ID:    "ctrl-1",
 			Lease: domain.LeaseSpec{TTL: 15 * time.Second},
 		},
-		Topology:    domain.TopologySpec{Kind: domain.TopologyAsyncSinglePrimary},
+		Topology:    domain.TopologySpec{Kind: domain.TopologyMySQLReplicationSinglePrimary},
 		Replication: domain.ReplicationSpec{Mode: domain.ReplicationModeGTID},
 		Nodes: []domain.NodeSpec{
 			{ID: "db1", Host: "10.0.0.1", Port: 3306, ExpectedRole: domain.NodeRolePrimary},

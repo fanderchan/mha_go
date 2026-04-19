@@ -158,16 +158,22 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 cp examples/cluster-8.4.yaml /etc/mha/cluster.yaml
 ```
 
+`examples/cluster-8.4.yaml` 是起步模板，只保留必要字段和不容易误解的默认值。
+VIP/proxy 切换、自定义 fencing、hooks、SSH binlog salvage 等高级能力需要时再从
+[examples/cluster-8.4.full.yaml](../examples/cluster-8.4.full.yaml) 复制对应段落。
+
 最小配置示例（`cluster.yaml`）：
 
 ```yaml
 name: my-cluster
 
 topology:
-  kind: async-single-primary
+  kind: mysql-replication-single-primary
 
 replication:
   mode: gtid
+  semi_sync:
+    policy: disabled
 
 nodes:
   - id: db1
@@ -222,7 +228,7 @@ export MHA_REPL_PASSWORD='你的复制账号强密码'
 预期输出：
 
 ```
-Cluster: my-cluster  mode=async-single-primary  primary=db1  nodes=3
+Cluster: my-cluster  mode=mysql-replication-single-primary  primary=db1  nodes=3
   - db1    role=primary health=alive   addr=10.0.0.11:3306   ro=false sro=false
   - db2    role=replica health=alive   addr=10.0.0.12:3306   ro=true sro=true
          replica: source=db1 io=true sql=true lag=0s autopos=true
@@ -316,7 +322,8 @@ journalctl -u mha-manager -f
 | [部署指南](deploy-mha-go_zh.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
 | [测试指南](testing_zh.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
 | [变更日志](../CHANGELOG_zh.md) | 版本发布历史 |
-| [配置示例：MySQL 8.4](../examples/cluster-8.4.yaml) | 完整注释的三节点集群配置 |
+| [配置示例：MySQL 8.4 起步模板](../examples/cluster-8.4.yaml) | 小而直接的三节点起步配置 |
+| [配置示例：MySQL 8.4 完整参考](../examples/cluster-8.4.full.yaml) | 逐字段注释的完整配置参考 |
 
 ## 许可协议
 
