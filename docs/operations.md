@@ -168,6 +168,16 @@ controller:
 | `salvage.policy` | `salvage-if-possible` | See [Salvage policy](#10-salvage-policy). |
 | `salvage.timeout` | `30s` | Maximum time to wait for GTID catch-up during salvage. |
 
+How to choose `semi_sync.policy`:
+
+| Policy | Use when | Effect |
+|--------|----------|--------|
+| `disabled` | Semi-sync is not installed, not enabled, or you are first bringing a cluster under mha-go control. | mha-go does not treat semi-sync state as part of health. Replication can still be GTID-based and healthy. |
+| `preferred` | Semi-sync should normally be running, but temporary degradation to async should not block every operation. | Health checks warn when the primary is not operating as a semi-sync source. |
+| `required` | Your operational policy requires semi-sync to be operational before the cluster is considered healthy. | Health checks report errors when the primary semi-sync source is not operational or too few semi-sync replicas are available. |
+
+Semi-sync does not change `topology.kind`: both pure async and semi-sync deployments use `mysql-replication-single-primary`.
+
 #### `writer_endpoint`
 
 | Field | Default | Description |
@@ -177,6 +187,18 @@ controller:
 | `command` | | Path to the script that moves the endpoint. Falls back to env `MHA_WRITER_ENDPOINT_COMMAND`. |
 | `precheck_command` | | Optional command run before promotion. Falls back to env `MHA_WRITER_ENDPOINT_PRECHECK_COMMAND`. |
 | `verify_command` | | Optional command run after endpoint switch. Falls back to env `MHA_WRITER_ENDPOINT_VERIFY_COMMAND`. |
+
+`writer_endpoint` answers "where should new application writes go after the new primary is promoted?" It does not fence the old primary. Configure fencing separately when the old primary must be removed from a writer pool, powered off, or isolated at the network/cloud layer.
+
+How to choose `writer_endpoint.kind`:
+
+| Kind | Use when | Required setup |
+|------|----------|----------------|
+| `none` / `off` | Applications connect directly to a host, or endpoint movement is handled manually/outside mha-go. | No endpoint command. This is the safest starter value. |
+| `vip` | Applications write through a virtual IP that must move to the new primary. | `writer_endpoint.command` or `MHA_WRITER_ENDPOINT_COMMAND`; optional precheck/verify commands are strongly recommended. |
+| `proxy` | Applications write through ProxySQL, HAProxy, a load balancer, service discovery, or another proxy writer target. | A command that updates the proxy writer target and, ideally, a verify command that proves writes now reach the new primary. |
+
+For `vip` and `proxy`, mha-go passes context through environment variables such as `MHA_WRITER_ENDPOINT_TARGET`, `MHA_NEW_PRIMARY_HOST`, and `MHA_OLD_PRIMARY_HOST`. See [Writer endpoint integration](#7-writer-endpoint-integration).
 
 #### `fencing`
 
@@ -199,6 +221,21 @@ fencing:
 | `steps[].required` | `true` | Required fence failures abort failover. Optional failures are logged and failover continues. |
 | `steps[].command` | | Shell command for non-`read_only` fence steps. |
 | `steps[].timeout` | | Optional duration limit for the individual fence step. |
+
+Fencing answers "can the old primary still accept writes?" It is intentionally separate from `writer_endpoint`. Moving a VIP or proxy writer target sends new traffic elsewhere, but it does not always prove the old primary cannot still be written by stale clients, direct connections, or split-brain paths.
+
+How to choose `fencing.steps[].kind`:
+
+| Kind | Use when | Notes |
+|------|----------|-------|
+| `read_only` | The old primary is still SQL-reachable and should be made read-only. | Built-in SQL fence; no command needed. This is the default when `fencing` is omitted. |
+| `command` | You have a custom script that performs the whole old-primary isolation action. | Generic command wrapper; inspect `MHA_FENCE_KIND` and old/new primary env vars inside the script. |
+| `vip` | The fence action is specifically about removing or blocking the old primary's VIP ownership. | Runs a command with `MHA_FENCE_KIND=vip`; this is old-primary isolation, not the writer endpoint switch step. |
+| `proxy` | The fence action removes the old primary from a proxy writer pool or blocks direct proxy writes to it. | Runs a command with `MHA_FENCE_KIND=proxy`; pair it with `writer_endpoint.kind: proxy` when the proxy also needs a new writer target. |
+| `stonith` | You can isolate the old primary by power, VM, host, or instance control. | Strongest style of fence; mark `required: true` only when the command is reliable and safe. |
+| `cloud_route` | You isolate the old primary by cloud route, security group, firewall, EIP, or similar network control. | Use a verify step in the command or follow-up checks to prove the old write path is blocked. |
+
+Keep required fences for actions that must succeed before writes move. Use optional fences only for defense-in-depth actions where failure should be logged but not block recovery.
 
 #### `hooks`
 
@@ -523,6 +560,14 @@ When a failover happens, the candidate may be missing transactions that were com
 | `strict` | Block at plan time if any missing transactions are detected. The operator must resolve them manually before executing. |
 | `salvage-if-possible` (default) | Attempt to catch up the candidate by pointing it at the old primary (or another donor) via GTID. If the old primary is SQL-dead but SSH-reachable, dump local binlogs over SSH and apply the missing GTIDs. If this fails, abort the failover. |
 | `availability-first` | Same as `salvage-if-possible`, but a catch-up failure is recorded as a warning and the failover continues. Prioritises availability over zero data loss. |
+
+How to choose:
+
+| Policy | Consistency posture | Operational tradeoff |
+|--------|---------------------|----------------------|
+| `strict` | Most conservative. Do not automate promotion unless mha-go can prove the candidate is not missing transactions. | Highest chance of manual intervention during a primary failure. |
+| `salvage-if-possible` | Default recommendation. Try to preserve zero data loss by recovering the missing GTIDs, then abort if recovery cannot be completed. | Requires correct donor access; SSH binlog salvage needs per-node `ssh` config and accurate binlog paths. |
+| `availability-first` | Accepts the risk that transactions committed only on the old primary may be lost. | Keeps failover moving when recovery fails; use only when availability is more important than guaranteed zero data loss. |
 
 SQL donor catch-up uses `WAIT_FOR_EXECUTED_GTID_SET()` with the timeout configured in `replication.salvage.timeout` (default `30s`).
 

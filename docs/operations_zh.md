@@ -169,6 +169,16 @@ controller:
 | `salvage.policy` | `salvage-if-possible` | 详见 [Salvage 策略](#10-salvage-策略)。 |
 | `salvage.timeout` | `30s` | salvage 过程中等待 GTID 追平的最长时间。 |
 
+如何选择 `semi_sync.policy`：
+
+| 策略 | 适用场景 | 效果 |
+|------|----------|------|
+| `disabled` | 没有安装/启用半同步，或者刚开始把集群接入 mha-go。 | mha-go 不把半同步状态纳入健康判断；集群仍然可以是健康的 GTID 主从。 |
+| `preferred` | 平时希望半同步正常，但短时降级为异步不应该阻断所有操作。 | 主库半同步 source 不工作时，健康检查给 warning。 |
+| `required` | 运维策略要求半同步必须正常，集群才算健康。 | 主库半同步 source 不工作，或可用半同步从库数量不足时，健康检查给 error。 |
+
+半同步不会改变 `topology.kind`：纯异步和半同步部署都使用 `mysql-replication-single-primary`。
+
 #### `writer_endpoint`
 
 | 字段 | 默认值 | 说明 |
@@ -178,6 +188,18 @@ controller:
 | `command` | | 切换 endpoint 的脚本路径。缺省时回退到环境变量 `MHA_WRITER_ENDPOINT_COMMAND`。 |
 | `precheck_command` | | 提升前的可选预检命令。回退到 `MHA_WRITER_ENDPOINT_PRECHECK_COMMAND`。 |
 | `verify_command` | | 切换后的可选验证命令。回退到 `MHA_WRITER_ENDPOINT_VERIFY_COMMAND`。 |
+
+`writer_endpoint` 回答的是“新主提升后，新的业务写流量应该去哪里？” 它不是旧主隔离。旧主是否还能被写入，要通过 `fencing` 单独配置。
+
+如何选择 `writer_endpoint.kind`：
+
+| kind | 适用场景 | 必要准备 |
+|------|----------|----------|
+| `none` / `off` | 业务直接连固定主机，或者写入口切换由人工/外部系统处理。 | 不需要 endpoint 命令。这是最安全的起步值。 |
+| `vip` | 业务通过 VIP 写库，主从切换后 VIP 必须漂到新主。 | 配置 `writer_endpoint.command` 或 `MHA_WRITER_ENDPOINT_COMMAND`；强烈建议同时配置 precheck/verify。 |
+| `proxy` | 业务通过 ProxySQL、HAProxy、负载均衡、服务发现或其他代理写入口。 | 准备一个能更新代理 writer 目标的命令，最好再配置 verify 命令证明写入口已指向新主。 |
+
+使用 `vip` 或 `proxy` 时，mha-go 会通过环境变量传递上下文，例如 `MHA_WRITER_ENDPOINT_TARGET`、`MHA_NEW_PRIMARY_HOST`、`MHA_OLD_PRIMARY_HOST`。详见 [Writer endpoint 集成](#7-writer-endpoint-集成)。
 
 #### `fencing`
 
@@ -200,6 +222,21 @@ fencing:
 | `steps[].required` | `true` | required 的 fence 失败会中止故障转移；optional 的失败只记录日志并继续。 |
 | `steps[].command` | | 非 `read_only` 类型的 shell 命令。 |
 | `steps[].timeout` | | 单个 fence 步骤的可选超时。 |
+
+`fencing` 回答的是“旧主是否还能继续接受写入？” 它和 `writer_endpoint` 刻意分开建模。VIP 或代理 writer 目标切走，只代表新流量应该去新主；它不一定能证明旧主不会被旧连接、直连或脑裂路径继续写入。
+
+如何选择 `fencing.steps[].kind`：
+
+| kind | 适用场景 | 说明 |
+|------|----------|------|
+| `read_only` | 旧主 SQL 仍可达，需要把旧主设置为只读。 | 内置 SQL fence，不需要 command。省略 `fencing` 时默认使用它。 |
+| `command` | 已有一个自定义脚本能完整完成旧主隔离。 | 通用命令包装；脚本里可读取 `MHA_FENCE_KIND` 和旧主/新主环境变量。 |
+| `vip` | 隔离动作专门用于移除或阻断旧主的 VIP 持有关系。 | 执行 command，并设置 `MHA_FENCE_KIND=vip`；这是旧主隔离，不是 writer endpoint 切换步骤。 |
+| `proxy` | 隔离动作把旧主从代理写池摘除，或阻断代理继续写旧主。 | 执行 command，并设置 `MHA_FENCE_KIND=proxy`；如果代理还要切新 writer，可同时配置 `writer_endpoint.kind: proxy`。 |
+| `stonith` | 可以通过电源、虚拟机、主机或实例控制来隔离旧主。 | 最强隔离方式；只有当命令可靠且安全时才建议 `required: true`。 |
+| `cloud_route` | 通过云路由、安全组、防火墙、EIP 等网络控制隔离旧主。 | 命令里或后续检查里应验证旧写路径确实已阻断。 |
+
+必须成功才能继续切写的隔离动作应设为 `required: true`。只作为加固手段的动作可以设为 optional，失败时记录日志但不阻断恢复。
 
 #### `hooks`
 
@@ -526,6 +563,14 @@ v1 刻意不提供 `admin history` 命令。日志保留、轮转、集中采集
 | `strict` | 规划阶段若检出缺失事务就直接阻断。必须由运维人员先手动解决再执行。 |
 | `salvage-if-possible`（默认） | 尝试让候选主通过 GTID 指向旧主（或其他 donor）追平。若旧主 SQL 已死但 SSH 可达，则通过 SSH dump 本地 binlog 并应用缺失 GTID。若失败则中止故障转移。 |
 | `availability-first` | 与 `salvage-if-possible` 相同，但追平失败仅作为警告记录，故障转移继续。把可用性置于零数据丢失之前。 |
+
+如何选择：
+
+| 策略 | 一致性态度 | 运维取舍 |
+|------|------------|----------|
+| `strict` | 最保守。除非 mha-go 能证明候选主不缺事务，否则不自动提升。 | 主库故障时最容易需要人工介入。 |
+| `salvage-if-possible` | 默认推荐。先尽量通过 GTID 补齐缺失事务；补不齐就中止，避免冒险丢数据。 | 需要 donor 可访问；SSH binlog salvage 还需要每个节点配置正确的 `ssh` 和 binlog 路径。 |
+| `availability-first` | 接受旧主上可能存在未复制事务丢失的风险。 | recovery 失败时仍继续 failover；只适合可用性优先于零数据丢失的场景。 |
 
 SQL donor 追平使用 `WAIT_FOR_EXECUTED_GTID_SET()`，超时由 `replication.salvage.timeout` 控制（默认 `30s`）。
 

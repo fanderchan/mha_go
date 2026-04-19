@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mha-go/internal/domain"
@@ -249,6 +250,9 @@ nodes:
 	_, err := LoadFile(path)
 	if err == nil {
 		t.Fatal("expected error for old async-single-primary topology kind")
+	}
+	if !strings.Contains(err.Error(), "use \"mysql-replication-single-primary\" instead") {
+		t.Fatalf("error = %q, want rename guidance", err)
 	}
 }
 

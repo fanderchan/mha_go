@@ -62,8 +62,11 @@ replication:
     timeout: 30s
 
 writer_endpoint:
+  # Moves the application writer entry point after promotion.
   # none/off: no endpoint movement.
-  # vip/proxy: execute command after promotion to move the write endpoint.
+  # vip: move a virtual IP to the new primary.
+  # proxy: update a proxy/load-balancer/service-discovery writer target.
+  # This does not fence the old primary; configure fencing separately.
   kind: none
   # VIP address or proxy writer identifier passed to endpoint scripts.
   target: ""
@@ -77,6 +80,7 @@ writer_endpoint:
 fencing:
   # Fencing answers "can the old primary still accept writes?".
   # If this section is omitted, mha-go uses one required read_only fence.
+  # read_only is built in. command/vip/proxy/stonith/cloud_route require a command.
   steps:
     - kind: read_only
       # Required fence failure aborts failover; optional failure only warns.

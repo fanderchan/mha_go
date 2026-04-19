@@ -146,10 +146,12 @@ func (f fileSpec) toDomain() (domain.ClusterSpec, error) {
 	}
 	switch topologyKind {
 	case domain.TopologyMySQLReplicationSinglePrimary:
+	case "async-single-primary":
+		return spec, fmt.Errorf("topology.kind %q was renamed before release; use %q instead (semi-sync is configured separately with replication.semi_sync.policy)", topologyKind, domain.TopologyMySQLReplicationSinglePrimary)
 	case domain.TopologyGroupReplicationSinglePrimary, domain.TopologyGroupReplicationMultiPrimary, domain.TopologyInnoDBCluster:
 		return spec, fmt.Errorf("topology kind %q is reserved but not implemented in v1", topologyKind)
 	default:
-		return spec, fmt.Errorf("unsupported topology kind %q", topologyKind)
+		return spec, fmt.Errorf("unsupported topology kind %q; supported v1 kind is %q", topologyKind, domain.TopologyMySQLReplicationSinglePrimary)
 	}
 	singleWriter := true
 	if f.Topology.SingleWriter != nil {
