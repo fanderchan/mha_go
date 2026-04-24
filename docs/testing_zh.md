@@ -7,7 +7,7 @@
 - 控制器、拓扑、复制、状态、hook、配置等包级别的单元测试。
 - GitHub Actions CI 覆盖格式检查、模块一致性、`go vet`、单元测试，以及 Linux 静态编译。
 - 本地 MySQL 8.4 集成烟雾测试，在 Docker 内起一套 GTID 单主拓扑运行。
-- 预留的 MySQL 9.7 ER/EA 验证计划（在稳定环境可用前先保留在测试蓝图里）。
+- MySQL 9.7 ER/EA 真实主机验证轨道，当前使用 dbbot 三节点实验环境手工执行，后续再自动化。
 
 ## 本地单元检查
 
@@ -106,7 +106,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 | 从库延迟 / 延迟不均 / 候选主选择 | 手工 | 候选主评分单测 | 注入延迟并验证候选主排序和阻断行为。 |
 | 候选主不能提升 / 中途步骤失败 | 手工 | executor 失败路径单测 | 通过 SQL 权限或外部命令失败验证 abort 状态和日志。 |
 | 真实 hook 通知系统 | 手工 | shell dispatcher 单测 | 验证副作用、失败处理和 dry-run 期望。 |
-| MySQL 9.7 ER/EA | 手工 | 版本归一化单测 | 有可用 9.7 环境后跑同一批场景。 |
+| MySQL 9.7 ER/EA | 真实主机手工验证 | 版本归一化单测 | 使用 dbbot 三节点实验环境记录 `check-repl`、在线切换 dry-run、主库存活时 failover 阻断和 manager 启动。 |
 
 ## 手工测试用例模板
 
@@ -122,15 +122,23 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 ## MySQL 9.7 ER/EA 验证计划
 
-MySQL 9.7 ER/EA 属于前向兼容目标，在稳定测试环境就绪前不作为发布阻断项。
+MySQL 9.7 ER/EA 属于前向兼容目标。当前手工验证环境是 dbbot 三节点实验环境：
 
-一旦有 9.7 环境可用，先跑一遍和 8.4 集成测试一样的场景：
+- `192.168.161.11`：主库和 manager
+- `192.168.161.12`：从库
+- `192.168.161.13`：从库
+
+先用 dbbot `master_slave.yml` 部署 MySQL 拓扑，再按本项目 README 或 dbbot
+`mha_go.yml` role 部署 mha-go。
+
+先跑一遍和 8.4 集成测试一样的场景：
 
 - `check-repl`
 - dry-run 和真实切换
 - 新主存活时故障转移被阻断
 - 主库停机后的真实故障转移
 - 旧主恢复后用 GTID auto-position 重新加入拓扑
+- manager systemd 启动和日志
 
 9.7 特有的检查只能通过 capability 探测加进来。不要引入会削弱 8.4 发布基线的版本分支逻辑。
 

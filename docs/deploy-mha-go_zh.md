@@ -2,13 +2,15 @@
 
 [English](deploy-mha-go.md)
 
-适用于通过 dbbot `master_slave.yml` playbook 部署的一主两从 MySQL 8.4 GTID 拓扑。
+适用于通过 dbbot `master_slave.yml` playbook 部署的一主两从 MySQL 8.4.x 或
+9.7.0 GTID 拓扑。下文示例使用 dbbot 默认测试环境：`192.168.161.11/12/13`
+上的 MySQL 9.7.0。
 
 ## 前提条件
 
 | 项目 | 要求 |
 |---|---|
-| MySQL 版本 | 8.4.x（GTID ON，`gtid_mode=ON`，`enforce_gtid_consistency=ON`） |
+| MySQL 版本 | 8.4.x 或 9.7.0 ER/EA（GTID ON，`gtid_mode=ON`，`enforce_gtid_consistency=ON`） |
 | 拓扑 | 一主两从，由 `master_slave.yml` 部署（存在 `master_slave_finish.flag`） |
 | 用户 | `admin` 账号具备 `SUPER`/`SYSTEM_VARIABLES_ADMIN` 权限，用于授权 |
 | 网络 | 中控机（manager_ip）可 TCP 3306 访问全部三节点 |
@@ -61,7 +63,10 @@ CREATE USER IF NOT EXISTS 'mha'@'<subnet>%'
   IDENTIFIED BY '<password>';
 
 GRANT SELECT, RELOAD, PROCESS, SUPER,
-      REPLICATION SLAVE, REPLICATION CLIENT
+      REPLICATION CLIENT, REPLICATION SLAVE,
+      REPLICATION_SLAVE_ADMIN,
+      SYSTEM_VARIABLES_ADMIN,
+      SESSION_VARIABLES_ADMIN
   ON *.* TO 'mha'@'<subnet>%';
 
 FLUSH PRIVILEGES;
@@ -79,7 +84,7 @@ dbbot 默认值：
 验证是否已复制到从库：
 
 ```bash
-mysql -h 192.168.161.12 -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
+mysql -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
 ```
 
 ## 步骤四：编写集群配置
@@ -107,8 +112,8 @@ controller:
 replication:
   mode: gtid
   semi_sync:
-    policy: preferred          # 有插件时生效，无则降为 async
-    wait_for_replica_count: 1
+    policy: disabled           # dbbot master_slave.yml 默认是纯异步复制
+    wait_for_replica_count: 0
     timeout: 5s
   salvage:
     policy: salvage-if-possible
@@ -121,7 +126,7 @@ nodes:
   - id: db1
     host: 192.168.161.11
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # MySQL 8.4.x 使用 "8.4"
     expected_role: primary
     candidate_priority: 0
     sql:
@@ -133,7 +138,7 @@ nodes:
   - id: db2
     host: 192.168.161.12
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # MySQL 8.4.x 使用 "8.4"
     expected_role: replica
     candidate_priority: 100    # 最高优先级，优先提升
     sql:
@@ -145,7 +150,7 @@ nodes:
   - id: db3
     host: 192.168.161.13
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # MySQL 8.4.x 使用 "8.4"
     expected_role: replica
     candidate_priority: 90
     sql:
@@ -220,16 +225,19 @@ systemctl enable mha-manager
 ```ini
 [Unit]
 Description=dbbot MHA Go Manager
-After=network.target mysqld.service
+After=network.target mysql3306.service
+Wants=mysql3306.service
 
 [Service]
 Type=simple
 User=mysql
-ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml
+Group=mysql
+ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml --log-format json
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=mha-manager
 
 [Install]
 WantedBy=multi-user.target

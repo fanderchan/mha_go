@@ -7,7 +7,7 @@ This project has three test layers:
 - Unit and package tests for controller, topology, replication, state, hooks, and config behavior.
 - GitHub Actions CI for formatting, module consistency, `go vet`, unit tests, and static Linux builds.
 - A local MySQL 8.4 integration smoke test that starts a GTID single-primary topology in Docker.
-- A future MySQL 9.7 ER/EA validation track, kept in the test blueprint until a reliable environment is available.
+- A MySQL 9.7 ER/EA real-host validation track for the dbbot lab topology, run manually until it is automated.
 
 ## Local Unit Checks
 
@@ -106,7 +106,7 @@ Legend:
 | Replica lag / uneven lag / lagging candidate selection | Manual | Candidate scoring unit tests | Inject lag and verify candidate ranking plus blocking behavior. |
 | Candidate cannot be promoted / mid-step failure | Manual | Executor failure unit tests | Force SQL privilege or command failures and validate abort state/logs. |
 | Hook scripts with real notification systems | Manual | Shell dispatcher unit tests | Confirm side effects, failure handling, and dry-run expectations. |
-| MySQL 9.7 ER/EA | Manual | Version normalization unit tests | Run the same scenario list once a usable 9.7 environment exists. |
+| MySQL 9.7 ER/EA | Manual real-host validation | Version normalization unit tests | Use the dbbot 3-node lab and record `check-repl`, switchover dry-run, blocked failover while primary is alive, and manager startup. |
 
 ## Manual Test Case Template
 
@@ -122,15 +122,24 @@ For each manual case, record:
 
 ## MySQL 9.7 ER/EA Validation Plan
 
-MySQL 9.7 ER/EA is a forward-compatibility target, but it is not a current release blocker without a stable test environment.
+MySQL 9.7 ER/EA is a forward-compatibility target. The current manual
+validation environment is the dbbot 3-node lab:
 
-When a 9.7 environment is available, validate the same scenarios as the 8.4 integration test first:
+- `192.168.161.11`: primary and manager
+- `192.168.161.12`: replica
+- `192.168.161.13`: replica
+
+Deploy the MySQL topology with dbbot `master_slave.yml`, then deploy mha-go
+from this project's README or the dbbot `mha_go.yml` role.
+
+Validate the same scenarios as the 8.4 integration test first:
 
 - `check-repl`
 - dry-run and real switchover
 - blocked failover while the primary is alive
 - real failover after primary stop
 - old-primary rejoin with GTID auto-position
+- manager systemd startup and logs
 
 Add 9.7-specific checks only through capability detection. Do not add version branches that weaken the 8.4 release baseline.
 

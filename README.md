@@ -70,6 +70,8 @@ Legend: `✓` supported, `-` not supported by design, `Partial` implemented for 
 | MySQL 9.7 ER/EA | Forward-compatibility target |
 
 MySQL 5.7, 8.0, and 9.6 are **not** supported. GTID must be enabled on all nodes.
+For MySQL 9.7.0, use the same configuration shape and set each node's
+`version_series` to `"9.7"`.
 
 ## Quick Start
 
@@ -99,9 +101,11 @@ Run on the **primary** (replicates to all replicas via GTID):
 CREATE USER IF NOT EXISTS 'mha'@'<your-subnet>%'
   IDENTIFIED BY '<strong-password>';
 
--- Minimum privileges for health checks + failover
-GRANT RELOAD,
+-- Operational privileges for health checks, switchover, and failover
+GRANT SELECT,
+      RELOAD,
       PROCESS,
+      SUPER,
       REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
@@ -162,6 +166,8 @@ cp examples/cluster-8.4.yaml /etc/mha/cluster.yaml
 advanced sections such as VIP/proxy switching, custom fencing, hooks, and SSH
 binlog salvage. Use [examples/cluster-8.4.full.yaml](examples/cluster-8.4.full.yaml)
 as the field-by-field reference when enabling those features.
+For a MySQL 9.7.0 cluster, keep the same template and change every
+`version_series: "8.4"` entry to `version_series: "9.7"`.
 
 Minimal configuration (`cluster.yaml`):
 
@@ -180,7 +186,7 @@ nodes:
   - id: db1
     host: 10.0.0.11
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # use "9.7" for MySQL 9.7.0
     expected_role: primary
     sql:
       user: mha
@@ -191,7 +197,7 @@ nodes:
   - id: db2
     host: 10.0.0.12
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # use "9.7" for MySQL 9.7.0
     expected_role: replica
     candidate_priority: 100
     sql:
@@ -203,7 +209,7 @@ nodes:
   - id: db3
     host: 10.0.0.13
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # use "9.7" for MySQL 9.7.0
     expected_role: replica
     candidate_priority: 90
     sql:
@@ -327,7 +333,7 @@ journalctl -u mha-manager -f
 | [Operations Guide](docs/operations.md) | Full config reference, MySQL prerequisites, all workflows |
 | [Architecture Blueprint](docs/mha-go-blueprint.md) | Design decisions and module responsibilities |
 | [Deployment Guide](docs/deploy-mha-go.md) | Step-by-step deployment with [dbbot](https://github.com/fanderchan/dbbot) |
-| [Testing Guide](docs/testing.md) | Unit, CI, and local MySQL 8.4 integration tests |
+| [Testing Guide](docs/testing.md) | Unit, CI, local MySQL 8.4 integration tests, and MySQL 9.7 validation notes |
 | [Changelog](CHANGELOG.md) | Release history |
 | [Example: MySQL 8.4 starter](examples/cluster-8.4.yaml) | Small starter config for a 3-node cluster |
 | [Example: MySQL 8.4 full reference](examples/cluster-8.4.full.yaml) | Verbose field-by-field annotated config |

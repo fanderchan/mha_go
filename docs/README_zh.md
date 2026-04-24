@@ -70,6 +70,7 @@
 | MySQL 9.7 ER/EA | 前向兼容目标 |
 
 **不支持** MySQL 5.7、8.0 和 9.6。所有节点必须开启 GTID。
+MySQL 9.7.0 使用同一套配置结构，但每个节点的 `version_series` 要写成 `"9.7"`。
 
 ## 快速上手
 
@@ -99,9 +100,11 @@ SHOW VARIABLES WHERE Variable_name IN ('gtid_mode', 'enforce_gtid_consistency');
 CREATE USER IF NOT EXISTS 'mha'@'<你的子网>%'
   IDENTIFIED BY '<强密码>';
 
--- 健康检查 + 故障转移所需的最小权限
-GRANT RELOAD,
+-- 健康检查、在线切换和故障转移所需的运维权限
+GRANT SELECT,
+      RELOAD,
       PROCESS,
+      SUPER,
       REPLICATION CLIENT,
       REPLICATION SLAVE,
       REPLICATION_SLAVE_ADMIN,
@@ -161,6 +164,8 @@ cp examples/cluster-8.4.yaml /etc/mha/cluster.yaml
 `examples/cluster-8.4.yaml` 是起步模板，只保留必要字段和不容易误解的默认值。
 VIP/proxy 切换、自定义 fencing、hooks、SSH binlog salvage 等高级能力需要时再从
 [examples/cluster-8.4.full.yaml](../examples/cluster-8.4.full.yaml) 复制对应段落。
+MySQL 9.7.0 集群仍使用这个模板，只需把每个节点的 `version_series: "8.4"` 改成
+`version_series: "9.7"`。
 
 最小配置示例（`cluster.yaml`）：
 
@@ -179,7 +184,7 @@ nodes:
   - id: db1
     host: 10.0.0.11
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # MySQL 9.7.0 使用 "9.7"
     expected_role: primary
     sql:
       user: mha
@@ -190,7 +195,7 @@ nodes:
   - id: db2
     host: 10.0.0.12
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # MySQL 9.7.0 使用 "9.7"
     expected_role: replica
     candidate_priority: 100
     sql:
@@ -202,7 +207,7 @@ nodes:
   - id: db3
     host: 10.0.0.13
     port: 3306
-    version_series: "8.4"
+    version_series: "8.4"  # MySQL 9.7.0 使用 "9.7"
     expected_role: replica
     candidate_priority: 90
     sql:
@@ -325,7 +330,7 @@ journalctl -u mha-manager -f
 | [操作手册](operations_zh.md) | 完整配置参考、MySQL 前置条件、操作流程 |
 | [架构蓝图](mha-go-blueprint_zh.md) | 设计决策和模块职责 |
 | [部署指南](deploy-mha-go_zh.md) | 配合 [dbbot](https://github.com/fanderchan/dbbot) 的分步部署 |
-| [测试指南](testing_zh.md) | 单元测试、CI 和本地 MySQL 8.4 集成测试 |
+| [测试指南](testing_zh.md) | 单元测试、CI、本地 MySQL 8.4 集成测试和 MySQL 9.7 验证说明 |
 | [变更日志](../CHANGELOG_zh.md) | 版本发布历史 |
 | [配置示例：MySQL 8.4 起步模板](../examples/cluster-8.4.yaml) | 小而直接的三节点起步配置 |
 | [配置示例：MySQL 8.4 完整参考](../examples/cluster-8.4.full.yaml) | 逐字段注释的完整配置参考 |

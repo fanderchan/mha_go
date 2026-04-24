@@ -2,13 +2,15 @@
 
 [中文](deploy-mha-go_zh.md)
 
-For a 1-primary 2-replica MySQL 8.4 GTID topology deployed with dbbot's `master_slave.yml` playbook.
+For a 1-primary 2-replica MySQL 8.4.x or 9.7.0 GTID topology deployed with
+dbbot's `master_slave.yml` playbook. The concrete examples below use the dbbot
+default test environment: MySQL 9.7.0 on `192.168.161.11/12/13`.
 
 ## Prerequisites
 
 | Item | Requirement |
 |---|---|
-| MySQL version | 8.4.x (GTID ON, `gtid_mode=ON`, `enforce_gtid_consistency=ON`) |
+| MySQL version | 8.4.x or 9.7.0 ER/EA (GTID ON, `gtid_mode=ON`, `enforce_gtid_consistency=ON`) |
 | Topology | 1 primary + 2 replicas deployed by `master_slave.yml` (`master_slave_finish.flag` present) |
 | Account | `admin` account with `SUPER`/`SYSTEM_VARIABLES_ADMIN` privileges for granting |
 | Network | Control host (manager_ip) can reach all three nodes on TCP 3306 |
@@ -61,7 +63,10 @@ CREATE USER IF NOT EXISTS 'mha'@'<subnet>%'
   IDENTIFIED BY '<password>';
 
 GRANT SELECT, RELOAD, PROCESS, SUPER,
-      REPLICATION SLAVE, REPLICATION CLIENT
+      REPLICATION CLIENT, REPLICATION SLAVE,
+      REPLICATION_SLAVE_ADMIN,
+      SYSTEM_VARIABLES_ADMIN,
+      SESSION_VARIABLES_ADMIN
   ON *.* TO 'mha'@'<subnet>%';
 
 FLUSH PRIVILEGES;
@@ -80,7 +85,7 @@ Keep the management account and replication account separate in `cluster.yaml`.
 Verify it replicated to the replicas:
 
 ```bash
-mysql -h 192.168.161.12 -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
+mysql -u admin -p -e "SHOW GRANTS FOR 'mha'@'192.168.161.%';"
 ```
 
 ## Step 4: Write the cluster config
@@ -108,8 +113,8 @@ controller:
 replication:
   mode: gtid
   semi_sync:
-    policy: preferred          # takes effect when the plugin is loaded; otherwise falls back to async
-    wait_for_replica_count: 1
+    policy: disabled           # dbbot master_slave.yml is pure async by default
+    wait_for_replica_count: 0
     timeout: 5s
   salvage:
     policy: salvage-if-possible
@@ -122,7 +127,7 @@ nodes:
   - id: db1
     host: 192.168.161.11
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # use "8.4" for MySQL 8.4.x
     expected_role: primary
     candidate_priority: 0
     sql:
@@ -134,7 +139,7 @@ nodes:
   - id: db2
     host: 192.168.161.12
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # use "8.4" for MySQL 8.4.x
     expected_role: replica
     candidate_priority: 100    # highest priority; promoted first
     sql:
@@ -146,7 +151,7 @@ nodes:
   - id: db3
     host: 192.168.161.13
     port: 3306
-    version_series: "8.4"
+    version_series: "9.7"      # use "8.4" for MySQL 8.4.x
     expected_role: replica
     candidate_priority: 90
     sql:
@@ -221,16 +226,19 @@ See the systemd section below.
 ```ini
 [Unit]
 Description=dbbot MHA Go Manager
-After=network.target mysqld.service
+After=network.target mysql3306.service
+Wants=mysql3306.service
 
 [Service]
 Type=simple
 User=mysql
-ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml
+Group=mysql
+ExecStart=/usr/local/bin/mha manager --config /etc/mha/cluster.yaml --log-format json
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=mha-manager
 
 [Install]
 WantedBy=multi-user.target
